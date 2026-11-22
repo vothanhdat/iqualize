@@ -97,9 +97,12 @@ open /Applications/iQualize.app
 
 ### Band Management
 
-- Add bands with + buttons on either side of the EQ — new band copies the leftmost or rightmost band
+- Add bands with + buttons on either side of the EQ — the new band starts at 0 dB, so it doesn't change the sound until you adjust it, and takes the bandwidth and filter type of the leftmost or rightmost band (a Bell when that band is a pass or notch filter). The graph keeps its 20 Hz and 20 kHz edges clear of these buttons, so a band at either extreme stays clickable
 - Right-click context menu: Add Suggested Band finds the largest frequency gap and inserts a new band at the geometric midpoint
-- Delete, or reorder via the right-click context menu (Move Left/Right)
+- Delete a band with the × on its gain readout (shown for the selected or hovered band), with ⌫ on a selected band, or from the right-click menu
+- Remove Unused Bands (right-click menu) deletes every Bell or shelf band sitting at 0 dB in one undoable step — pass and notch filters stay, since they shape the sound regardless of gain
+- Reorder via the right-click context menu (Move Left/Right)
+- In split L/R mode, band edits apply to the channel you're viewing
 - Minimum 1 band, no maximum
 
 ### Presets

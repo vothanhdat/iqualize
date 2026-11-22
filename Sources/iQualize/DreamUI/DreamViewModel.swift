@@ -463,11 +463,38 @@ final class DreamViewModel {
         }
     }
 
+    /// False once the shown channel is down to `EQPresetData.minBandCount` bands — the GUI keeps
+    /// the same floor the CLI enforces.
+    var canDeleteBand: Bool { editableBands.count > EQPresetData.minBandCount }
+
     func deleteBand(id: UUID) {
-        if selectedBandID == id { selectedBandID = nil }
+        guard canDeleteBand, band(id: id) != nil else { return }
+        clearTransientState(forRemoved: [id])
         mutate("Delete Band") {
             self.editableBands.removeAll { $0.id == id }
         }
+    }
+
+    /// How many bands "Remove Unused Bands" would delete from the shown channel.
+    var unusedBandCount: Int { editableBands.count - editableBands.removingUnusedBands().count }
+
+    /// Deletes every Bell/shelf band at 0 dB from the shown channel in one undo step (see
+    /// `EQBand.isUnused`), keeping at least `EQPresetData.minBandCount` bands.
+    func removeUnusedBands() {
+        let kept = editableBands.removingUnusedBands()
+        guard kept.count < editableBands.count else { return }
+        let keptIDs = Set(kept.map(\.id))
+        clearTransientState(forRemoved: Set(editableBands.map(\.id)).subtracting(keptIDs))
+        mutate("Remove Unused Bands") {
+            self.editableBands = kept
+        }
+    }
+
+    /// Drop selection, hover, and an in-progress readout edit that point at bands being removed.
+    private func clearTransientState(forRemoved ids: Set<UUID>) {
+        if let id = selectedBandID, ids.contains(id) { selectedBandID = nil }
+        if let id = hoverBandID, ids.contains(id) { hoverBandID = nil }
+        if let target = editing, ids.contains(target.bandID) { editing = nil }
     }
 
     enum AddMode { case left, right, suggest }
@@ -486,11 +513,11 @@ final class DreamViewModel {
             case .left:
                 let template = sorted.first!
                 let f = Self.clampToZoom(template.frequency / 1.5, range)
-                self.editableBands.append(EQBand(frequency: f, gain: template.gain, bandwidth: template.bandwidth, filterType: template.filterType))
+                self.editableBands.append(.added(at: f, beside: template))
             case .right:
                 let template = sorted.last!
                 let f = Self.clampToZoom(template.frequency * 1.5, range)
-                self.editableBands.append(EQBand(frequency: f, gain: template.gain, bandwidth: template.bandwidth, filterType: template.filterType))
+                self.editableBands.append(.added(at: f, beside: template))
             case .suggest:
                 let f = self.findLargestGap(in: sorted, range: range)
                 self.editableBands.append(EQBand(frequency: f, gain: 0, bandwidth: 1.0))

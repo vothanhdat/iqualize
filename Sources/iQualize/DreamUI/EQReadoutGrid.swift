@@ -55,6 +55,14 @@ struct ReadoutCell: View {
     private var isSelected: Bool { vm.selectedBandID == band.id }
     private var isEditing: Bool { vm.editing == EditingTarget(bandID: band.id, field: field) }
 
+    /// The × sits on the gain cell of the selected or hovered band (hovering its knob on the
+    /// canvas counts). It's hidden while that cell is being edited, and when the shown channel
+    /// is down to its last band.
+    private var showsRemoveButton: Bool {
+        field == .gain && !isEditing && vm.canDeleteBand
+            && (isSelected || hover || vm.hoverBandID == band.id)
+    }
+
     var body: some View {
         ZStack {
             if isEditing {
@@ -114,6 +122,13 @@ struct ReadoutCell: View {
         )
         .shadow(color: isSelected ? theme.accent.opacity(0.25) : .clear, radius: isSelected ? 5 : 0)
         .opacity(band.muted ? 0.45 : 1.0)
+        // Inside the cell (not a sibling) so moving onto the × keeps this cell's hover alive.
+        .overlay(alignment: .topTrailing) {
+            if showsRemoveButton {
+                RemoveBandButton { vm.deleteBand(id: band.id) }
+                    .offset(x: 3, y: -3)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hover = $0; if hover { vm.hoverBandID = band.id } else if vm.hoverBandID == band.id { vm.hoverBandID = nil } }
         .onTapGesture {
@@ -250,6 +265,32 @@ struct ReadoutCell: View {
         if isSelected { return theme.accent }
         if hover { return theme.line2 }
         return theme.line
+    }
+}
+
+// MARK: - Remove button
+
+/// Small × badge on a band's gain cell that deletes the band (same as ⌫ on a selected band).
+@available(macOS 14.2, *)
+private struct RemoveBandButton: View {
+    let action: () -> Void
+
+    @Environment(\.dreamTheme) private var theme
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 14, height: 14)
+                .background(Circle().fill(hover ? Color(nsColor: .systemRed) : theme.textDim))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help("Remove band (⌫)")
+        .accessibilityLabel("Remove band")
     }
 }
 

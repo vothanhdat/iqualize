@@ -136,7 +136,7 @@ struct EQCanvasView: View {
     private func addButton(_ side: AddSide) -> some View {
         AddBandButton(side: side) { vm.addBand(side == .left ? .left : .right) }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side == .left ? .leading : .trailing)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, AddButtonMetrics.inset)
     }
 
     // MARK: - Pointer overlay
@@ -661,12 +661,15 @@ struct EQCanvasView: View {
             })
             menu.addItem(.separator())
 
-            let delete = MenuAction(title: "Delete Band") { [vm = self.vm] in
-                vm.deleteBand(id: bandID)
+            if vm.canDeleteBand {
+                let delete = MenuAction(title: "Delete Band") { [vm = self.vm] in
+                    vm.deleteBand(id: bandID)
+                }
+                delete.keyEquivalent = "\u{8}" // backspace
+                delete.keyEquivalentModifierMask = []
+                menu.addItem(delete)
             }
-            delete.keyEquivalent = "\u{8}" // backspace
-            delete.keyEquivalentModifierMask = []
-            menu.addItem(delete)
+            addRemoveUnusedItem(to: menu)
         } else {
             menu.addItem(MenuAction(title: "Add Suggested Band") { [vm = self.vm] in
                 vm.addBand(.suggest)
@@ -674,9 +677,23 @@ struct EQCanvasView: View {
             menu.addItem(MenuAction(title: "Add at end") { [vm = self.vm] in
                 vm.addBand(.right)
             })
+            if vm.unusedBandCount > 0 { menu.addItem(.separator()) }
+            addRemoveUnusedItem(to: menu)
         }
 
         return menu.items.isEmpty ? nil : menu
+    }
+
+    /// "Remove Unused Bands (N)" — only offered when the shown channel has Bell/shelf bands
+    /// sitting at 0 dB, so the count always says exactly what will go.
+    private func addRemoveUnusedItem(to menu: NSMenu) {
+        let count = vm.unusedBandCount
+        guard count > 0 else { return }
+        let item = MenuAction(title: "Remove Unused Bands (\(count))") { [vm = self.vm] in
+            vm.removeUnusedBands()
+        }
+        item.toolTip = "Deletes Bell and shelf bands set to 0 dB. They don't change the sound."
+        menu.addItem(item)
     }
 
     private func hitTest(_ p: CGPoint, in size: CGSize) -> HitResult? {
@@ -695,10 +712,11 @@ struct EQCanvasView: View {
 
     // MARK: - Math (mirrors iqualize-engine.js)
 
-    /// Horizontal margin reserved at 20 Hz and 20 kHz so a band knob sitting at either extreme
-    /// has room to render without being clipped by the canvas edge.
-    private static let chartLeftPad: CGFloat = 14
-    private static let chartRightPad: CGFloat = 14
+    /// Horizontal margin reserved at 20 Hz and 20 kHz: the +Add button's gutter plus a selected
+    /// knob's radius (9 pt) and 1 pt of air, so a band at either extreme is never drawn under a
+    /// +Add button (where it could not be clicked) or clipped by the canvas edge.
+    private static let chartLeftPad: CGFloat = AddButtonMetrics.inset + AddButtonMetrics.size + 10
+    private static let chartRightPad: CGFloat = chartLeftPad
 
     /// The canvas's current frequency domain — the full spectrum, or a zoomed-in sub-range.
     /// Every position/hit-test call site funnels through `freqToX`/`xToFreq`, so this one
@@ -892,6 +910,12 @@ struct EQCanvasView: View {
 
 private enum AddSide { case left, right }
 
+/// Size and edge inset of the +Add buttons. The chart's edge margins are derived from these.
+private enum AddButtonMetrics {
+    static let inset: CGFloat = 8
+    static let size: CGFloat = 26
+}
+
 @available(macOS 14.2, *)
 private struct AddBandButton: View {
     let side: AddSide
@@ -905,7 +929,7 @@ private struct AddBandButton: View {
             Text("+")
                 .font(.system(size: 16, weight: .light))
                 .foregroundStyle(hover ? theme.accent2 : theme.textDim)
-                .frame(width: 26, height: 26)
+                .frame(width: AddButtonMetrics.size, height: AddButtonMetrics.size)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(hover ? theme.accent.opacity(0.12) : theme.bgControl)

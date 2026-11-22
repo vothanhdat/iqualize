@@ -94,6 +94,47 @@ struct EQBand: Codable, Equatable, Sendable, Identifiable {
     static let bandwidthRange: ClosedRange<Float> = 0.05...8.0
 }
 
+extension FilterType {
+    /// Whether gain shapes this filter's response. Pass and notch filters ignore gain, so they
+    /// still change the sound at 0 dB.
+    var usesGain: Bool {
+        switch self {
+        case .parametric, .lowShelf, .highShelf: return true
+        case .lowPass, .highPass, .bandPass, .notch: return false
+        }
+    }
+}
+
+extension EQBand {
+    /// A Bell or shelf band whose gain reads 0.0 dB leaves the signal unchanged, so removing it
+    /// can't change what you hear.
+    var isUnused: Bool { filterType.usesGain && abs(gain) < 0.05 }
+
+    /// The band the +Add buttons place beside `neighbor`: its bandwidth and, for a Bell or
+    /// shelf, its filter type, but at 0 dB, so adding a band never changes the sound until you
+    /// adjust it. Pass and notch filters act at any gain, so a band copied from one is a Bell.
+    static func added(at frequency: Float, beside neighbor: EQBand) -> EQBand {
+        EQBand(frequency: frequency, gain: 0, bandwidth: neighbor.bandwidth,
+               filterType: neighbor.filterType.usesGain ? neighbor.filterType : .parametric)
+    }
+}
+
+extension Array where Element == EQBand {
+    /// The bands left after dropping every unused one (see `EQBand.isUnused`), in their original
+    /// order. A preset needs at least `EQPresetData.minBandCount` bands, so when every band is
+    /// unused the lowest-frequency ones are kept to make up the minimum.
+    func removingUnusedBands() -> [EQBand] {
+        let used = filter { !$0.isUnused }
+        let shortfall = EQPresetData.minBandCount - used.count
+        guard shortfall > 0 else { return used }
+        let keep = Set(filter(\.isUnused)
+            .sorted { $0.frequency < $1.frequency }
+            .prefix(shortfall)
+            .map(\.id))
+        return filter { !$0.isUnused || keep.contains($0.id) }
+    }
+}
+
 extension Comparable {
     func clamped(to range: ClosedRange<Self>) -> Self {
         min(max(self, range.lowerBound), range.upperBound)
