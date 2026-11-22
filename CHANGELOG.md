@@ -2,6 +2,21 @@
 
 All notable changes to iQualize will be documented in this file.
 
+## [0.61.0] - 2026-11-22
+
+### Added
+- A × on the selected or hovered band's gain readout removes that band.
+- "Remove Unused Bands" in the graph's right-click menu removes every Bell or shelf band set to 0 dB in one undoable step. Pass and notch filters are kept, since they change the sound at any gain.
+
+### Changed
+- The + buttons now add a band at 0 dB, taking the edge band's bandwidth and filter type (a Bell when that band is a pass or notch filter), so adding a band no longer changes the sound.
+- The graph keeps a margin at 20 Hz and 20 kHz, so bands at either extreme are no longer covered by the + buttons.
+- Deleting a band in the EQ window now stops at one band, matching the CLI.
+
+### Fixed
+- In split L/R mode with the right channel shown, band edits in the EQ window now apply to the right channel. Before, they did nothing or changed the left channel.
+- Band readouts no longer cut values off ("-1…") when there are many bands. Narrow cells switch to compact labels such as "-12.5", "1.25k" and "0.71".
+
 ## [0.60.1] - 2026-08-17
 
 ### Fixed
