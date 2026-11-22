@@ -73,8 +73,16 @@ struct ReadoutCell: View {
                     }
                     .onExitCommand { vm.editing = nil }
             } else {
-                Text(displayText)
-                    .font(.system(size: 11, design: .monospaced))
+                // Cells share the row width evenly, so with many bands they get narrower
+                // than a full label like "-12.5 dB". Fall back to a unitless compact label
+                // (the row and the Q/Oct toggle already say what the unit is), and only
+                // shrink the font as a last resort, rather than truncating to "-1…".
+                ViewThatFits(in: .horizontal) {
+                    readoutText(displayText)
+                    readoutText(compactText)
+                    readoutText(compactText)
+                        .minimumScaleFactor(0.6)
+                }
                     .foregroundStyle(textColor)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay(alignment: .center) {
@@ -87,7 +95,9 @@ struct ReadoutCell: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 22)
-        .padding(.horizontal, 6)
+        // Only insets the text from the border — the cell's own width comes from the
+        // row. Kept small so narrow cells (many bands) leave room for the value.
+        .padding(.horizontal, 3)
         .background(
             RoundedRectangle(cornerRadius: 5)
                 .fill(backgroundFill)
@@ -172,6 +182,24 @@ struct ReadoutCell: View {
             }
             return String(format: "%.2f oct", band.bandwidth)
         }
+    }
+
+    /// Unitless form of `displayText`, used when the cell is too narrow for the full label.
+    private var compactText: String {
+        switch field {
+        case .gain:
+            return formatDBCompact(band.gain)
+        case .frequency:
+            return formatHzCompact(band.frequency)
+        case .bandwidth:
+            return formatBandwidthCompact(octaves: band.bandwidth, display: vm.bandwidthDisplay)
+        }
+    }
+
+    private func readoutText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, design: .monospaced))
+            .lineLimit(1)
     }
 
     private var initialEditText: String {
@@ -302,6 +330,28 @@ func formatHz(_ f: Float) -> String {
         return "\(trimmed) kHz"
     }
     return "\(Int(f.rounded())) Hz"
+}
+
+// Compact, unitless variants for readout cells too narrow for the full labels above.
+
+/// "+0.0", "-12.5"
+func formatDBCompact(_ g: Float) -> String {
+    String(format: "%@%.1f", g >= 0 ? "+" : "", g)
+}
+
+/// "20", "460", "1.25k", "2k", "14.5k", "20k"
+func formatHzCompact(_ f: Float) -> String {
+    guard f >= 1000 else { return "\(Int(f.rounded()))" }
+    let k = f / 1000
+    let s = String(format: k >= 10 ? "%.1f" : "%.2f", k)
+    return s.replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression) + "k"
+}
+
+/// Q mode: "0.71", "1.4"; octave mode: "0.33"
+func formatBandwidthCompact(octaves: Float, display: BandwidthDisplay) -> String {
+    guard display == .q else { return String(format: "%.2f", octaves) }
+    let q = octavesToQ(Double(octaves))
+    return String(format: q < 1 ? "%.2f" : "%.1f", q)
 }
 
 func octavesToQ(_ oct: Double) -> Double {
