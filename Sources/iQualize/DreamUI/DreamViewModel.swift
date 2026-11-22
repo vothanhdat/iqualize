@@ -107,8 +107,19 @@ final class DreamViewModel {
 
     /// Bands for the active channel sorted by frequency — what the canvas/readouts show.
     var displayBands: [EQBand] {
-        let raw = (channel == .r ? (rightBands ?? bands) : bands)
-        return raw.sorted { $0.frequency < $1.frequency }
+        editableBands.sorted { $0.frequency < $1.frequency }
+    }
+
+    /// The band list the editor shows and edits: the right channel's while R is selected,
+    /// otherwise the left (or linked) list. Lookups and every band mutation go through this, so
+    /// a band picked on the canvas or in the readout grid is changed in the list it was drawn
+    /// from. (Edits used to always target `bands`: band IDs are minted fresh on each load, so in
+    /// R view they either did nothing or, after an in-session split, changed the left channel.)
+    private var editableBands: [EQBand] {
+        get { channel == .r ? (rightBands ?? bands) : bands }
+        set {
+            if channel == .r, rightBands != nil { rightBands = newValue } else { bands = newValue }
+        }
     }
 
     var displayBandCount: Int { displayBands.count }
@@ -402,18 +413,18 @@ final class DreamViewModel {
     // MARK: - Band lookups
 
     func indexOfBand(id: UUID) -> Int? {
-        bands.firstIndex { $0.id == id }
+        editableBands.firstIndex { $0.id == id }
     }
 
     func band(id: UUID) -> EQBand? {
-        bands.first { $0.id == id }
+        editableBands.first { $0.id == id }
     }
 
     // MARK: - Mutations: per-band
 
     func updateBand(id: UUID, frequency: Float? = nil, gain: Float? = nil, bandwidth: Float? = nil, filterType: FilterType? = nil, registerUndo: Bool = false) {
         guard let i = indexOfBand(id: id) else { return }
-        let cur = bands[i]
+        let cur = editableBands[i]
         // Clamp the requested values the same way the mutation will, so the no-op check below
         // compares apples to apples.
         let newFreq = frequency.map { $0.clamped(to: EQBand.frequencyRange) }
@@ -429,10 +440,10 @@ final class DreamViewModel {
             (filterType.map  { $0 != cur.filterType } ?? false)
         guard changes else { return }
         let body = {
-            if let f = newFreq { self.bands[i].frequency = f }
-            if let g = newGain { self.bands[i].gain      = g }
-            if let b = newBW   { self.bands[i].bandwidth = b }
-            if let t = filterType { self.bands[i].filterType = t }
+            if let f = newFreq { self.editableBands[i].frequency = f }
+            if let g = newGain { self.editableBands[i].gain      = g }
+            if let b = newBW   { self.editableBands[i].bandwidth = b }
+            if let t = filterType { self.editableBands[i].filterType = t }
         }
         if registerUndo {
             mutate(filterType != nil ? "Change Filter Type" : "Edit Band") { body() }
@@ -448,14 +459,14 @@ final class DreamViewModel {
     func toggleMute(id: UUID) {
         mutate("Toggle Mute") {
             guard let i = self.indexOfBand(id: id) else { return }
-            self.bands[i].muted.toggle()
+            self.editableBands[i].muted.toggle()
         }
     }
 
     func deleteBand(id: UUID) {
         if selectedBandID == id { selectedBandID = nil }
         mutate("Delete Band") {
-            self.bands.removeAll { $0.id == id }
+            self.editableBands.removeAll { $0.id == id }
         }
     }
 
@@ -466,23 +477,23 @@ final class DreamViewModel {
     func addBand(_ mode: AddMode) {
         mutate("Add Band") {
             let range = self.zoomRange.bounds
-            if self.bands.isEmpty {
-                self.bands.append(EQBand(frequency: Self.zoomMidpoint(range), gain: 0, bandwidth: 1.0))
+            if self.editableBands.isEmpty {
+                self.editableBands.append(EQBand(frequency: Self.zoomMidpoint(range), gain: 0, bandwidth: 1.0))
                 return
             }
-            let sorted = self.bands.sorted { $0.frequency < $1.frequency }
+            let sorted = self.editableBands.sorted { $0.frequency < $1.frequency }
             switch mode {
             case .left:
                 let template = sorted.first!
                 let f = Self.clampToZoom(template.frequency / 1.5, range)
-                self.bands.append(EQBand(frequency: f, gain: template.gain, bandwidth: template.bandwidth, filterType: template.filterType))
+                self.editableBands.append(EQBand(frequency: f, gain: template.gain, bandwidth: template.bandwidth, filterType: template.filterType))
             case .right:
                 let template = sorted.last!
                 let f = Self.clampToZoom(template.frequency * 1.5, range)
-                self.bands.append(EQBand(frequency: f, gain: template.gain, bandwidth: template.bandwidth, filterType: template.filterType))
+                self.editableBands.append(EQBand(frequency: f, gain: template.gain, bandwidth: template.bandwidth, filterType: template.filterType))
             case .suggest:
                 let f = self.findLargestGap(in: sorted, range: range)
-                self.bands.append(EQBand(frequency: f, gain: 0, bandwidth: 1.0))
+                self.editableBands.append(EQBand(frequency: f, gain: 0, bandwidth: 1.0))
             }
         }
     }
@@ -522,9 +533,9 @@ final class DreamViewModel {
         mutate("Move Band") {
             // Swap frequencies between the two bands so display order updates.
             let a = sorted[idx], b = sorted[newIdx]
-            for i in self.bands.indices {
-                if self.bands[i].id == a.id { self.bands[i].frequency = b.frequency }
-                else if self.bands[i].id == b.id { self.bands[i].frequency = a.frequency }
+            for i in self.editableBands.indices {
+                if self.editableBands[i].id == a.id { self.editableBands[i].frequency = b.frequency }
+                else if self.editableBands[i].id == b.id { self.editableBands[i].frequency = a.frequency }
             }
         }
     }
