@@ -117,6 +117,7 @@ open /Applications/iQualize.app
 - Preset Browser: an OPRA tab to search and import community headphone/IEM EQ profiles directly from the [OPRA](https://opra.roon.app/) database, and an iQualize tab to restore any built-in presets you've deleted
 - Quick switching from the menu bar or EQ window picker — both use the same native preset picker, with Favorites, Built-in, and Custom sections
 - Favorite presets (star icon, or ⌥-click a preset) to pin them to the top of the picker for one-click switching
+- Preset sidebar in the EQ window: the Favorites, Built-in, and Custom groups collapse from their headers (remembered across launches), and each preset shows a delete button on hover, with Favorite and Delete… in its right-click menu
 - Pin a preset to an output device (pin button in the EQ window toolbar, or from the menu bar) — it's recalled automatically whenever that device becomes the active audio output, including at launch
 
 #### Preset Format

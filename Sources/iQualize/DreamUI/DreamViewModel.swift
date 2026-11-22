@@ -44,6 +44,8 @@ final class DreamViewModel {
     var bandwidthDisplay: BandwidthDisplay = .oct
     var snapToSemitone: Bool = false
     var zoomRange: ZoomRange = .full
+    /// Preset sidebar groups the user has collapsed. Persisted, so the sidebar reopens the same way.
+    var collapsedPresetGroups: Set<PresetGroup> = []
     var theme: DreamThemePreference = .auto
     var editing: EditingTarget?
 
@@ -141,6 +143,7 @@ final class DreamViewModel {
         if let raw = s.dreamTheme, let t = DreamThemePreference(rawValue: raw) { theme = t }
         snapToSemitone = s.snapToSemitone
         zoomRange = s.zoomRange.flatMap(ZoomRange.init(rawValue:)) ?? .full
+        collapsedPresetGroups = Set(s.collapsedPresetGroups.compactMap(PresetGroup.init(rawValue:)))
         bandwidthDisplay = s.showBandwidthAsQ ? .q : .oct
         peakLimiter = s.peakLimiter
         bypass = s.bypassed
@@ -167,6 +170,12 @@ final class DreamViewModel {
 
     func persistSnap() {
         settings.set(\.snapToSemitone, snapToSemitone)
+    }
+
+    func setPresetGroup(_ group: PresetGroup, expanded: Bool) {
+        if expanded { collapsedPresetGroups.remove(group) } else { collapsedPresetGroups.insert(group) }
+        settings.set(\.collapsedPresetGroups,
+                     PresetGroup.allCases.filter(collapsedPresetGroups.contains).map(\.rawValue))
     }
 
     func persistZoomRange() {
@@ -713,6 +722,33 @@ final class DreamViewModel {
         performDeleteCurrentPreset()
     }
 
+    /// Whether a preset can be deleted from the sidebar. Flat is the app's fallback preset
+    /// and can never be removed.
+    func canDeletePreset(id: UUID) -> Bool { id != EQPresetData.flat.id }
+
+    /// Deletes any preset from the sidebar, with the same confirmation as the toolbar's
+    /// Delete button. The active preset goes through `deleteCurrentPreset` so the editor falls
+    /// back to Flat; any other preset is removed without touching what's loaded.
+    func deletePreset(id: UUID) {
+        guard canDeletePreset(id: id) else { return }
+        if id == activePresetID { deleteCurrentPreset(); return }
+        guard let preset = presetStore.preset(for: id) else { return }
+        let isBuiltInPreset = EQPresetData.builtInPresets.contains { $0.id == id }
+        let alert = NSAlert()
+        alert.messageText = "Delete \"\(preset.name)\"?"
+        alert.informativeText = isBuiltInPreset
+            ? "This hides it from the picker. You can bring it back later from the Preset Browser."
+            : "This can't be undone."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if isBuiltInPreset {
+            presetStore.hideBuiltInPreset(id: id)
+        } else {
+            presetStore.deleteCustomPreset(id: id)
+        }
+    }
+
     private func performDeleteCurrentPreset() {
         guard activePresetID != EQPresetData.flat.id else { return }
         if isBuiltIn {
@@ -1059,6 +1095,12 @@ final class DreamViewModel {
 
 enum BandwidthDisplay: String, Sendable {
     case q, oct
+}
+
+/// The preset sidebar's collapsible groups. Raw values are persisted in
+/// `iQualizeState.collapsedPresetGroups`.
+enum PresetGroup: String, CaseIterable, Sendable {
+    case favorites, builtIn, custom
 }
 
 enum ChannelMode: String, Sendable {

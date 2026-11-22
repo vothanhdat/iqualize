@@ -47,6 +47,9 @@ struct iQualizeState: Codable {
     var snapToSemitone: Bool
     /// EQ canvas zoom range, e.g. "full" | "subBass" | "bass" | "mid" | "presence" | "treble". Nil = full.
     var zoomRange: String?
+    /// Preset sidebar groups the user has collapsed: "favorites" | "builtIn" | "custom".
+    /// Empty = every group expanded.
+    var collapsedPresetGroups: [String]
 
     static let defaultState = iQualizeState(
         captureEnabled: true,
@@ -71,13 +74,14 @@ struct iQualizeState: Codable {
         postEqFillEnabled: true,
         dreamTheme: nil,
         snapToSemitone: false,
-        zoomRange: nil
+        zoomRange: nil,
+        collapsedPresetGroups: []
     )
 
     static let key = "com.iqualize.state"
     static let corruptBackupKeyPrefix = "com.iqualize.state.corruptBackup."
 
-    init(captureEnabled: Bool, selectedPresetID: UUID, peakLimiter: Bool, windowOpen: Bool = false, maxGainDB: Float = 12, bypassed: Bool = false, autoScale: Bool = true, preEqSpectrumEnabled: Bool = false, postEqSpectrumEnabled: Bool = false, hideFromDock: Bool = false, startAtLogin: Bool = false, balance: Float = 0.0, splitChannelEnabled: Bool = false, activeChannel: String? = nil, inputGainDB: Float = 0.0, outputGainDB: Float = 0.0, linkGainGlobally: Bool = false, showBandwidthAsQ: Bool = true, preEqLineColorHex: String? = nil, postEqLineColorHex: String? = nil, preEqFillColorHex: String? = nil, postEqFillColorHex: String? = nil, preEqFillEnabled: Bool = false, postEqFillEnabled: Bool = true, dreamTheme: String? = nil, snapToSemitone: Bool = false, zoomRange: String? = nil) {
+    init(captureEnabled: Bool, selectedPresetID: UUID, peakLimiter: Bool, windowOpen: Bool = false, maxGainDB: Float = 12, bypassed: Bool = false, autoScale: Bool = true, preEqSpectrumEnabled: Bool = false, postEqSpectrumEnabled: Bool = false, hideFromDock: Bool = false, startAtLogin: Bool = false, balance: Float = 0.0, splitChannelEnabled: Bool = false, activeChannel: String? = nil, inputGainDB: Float = 0.0, outputGainDB: Float = 0.0, linkGainGlobally: Bool = false, showBandwidthAsQ: Bool = true, preEqLineColorHex: String? = nil, postEqLineColorHex: String? = nil, preEqFillColorHex: String? = nil, postEqFillColorHex: String? = nil, preEqFillEnabled: Bool = false, postEqFillEnabled: Bool = true, dreamTheme: String? = nil, snapToSemitone: Bool = false, zoomRange: String? = nil, collapsedPresetGroups: [String] = []) {
         self.captureEnabled = captureEnabled
         self.selectedPresetID = selectedPresetID
         self.peakLimiter = peakLimiter
@@ -105,6 +109,7 @@ struct iQualizeState: Codable {
         self.dreamTheme = dreamTheme
         self.snapToSemitone = snapToSemitone
         self.zoomRange = zoomRange
+        self.collapsedPresetGroups = collapsedPresetGroups
     }
 
     init(from decoder: Decoder) throws {
@@ -136,6 +141,7 @@ struct iQualizeState: Codable {
         dreamTheme = try? container.decode(String.self, forKey: .dreamTheme)
         snapToSemitone = (try? container.decode(Bool.self, forKey: .snapToSemitone)) ?? false
         zoomRange = try? container.decode(String.self, forKey: .zoomRange)
+        collapsedPresetGroups = (try? container.decode([String].self, forKey: .collapsedPresetGroups)) ?? []
     }
 
     // Narrow persistence seam used only by SettingsStore (#177). The old

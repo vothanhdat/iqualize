@@ -7,6 +7,8 @@ All notable changes to iQualize will be documented in this file.
 ### Added
 - A × on the selected or hovered band's gain readout removes that band.
 - "Remove Unused Bands" in the graph's right-click menu removes every Bell or shelf band set to 0 dB in one undoable step. Pass and notch filters are kept, since they change the sound at any gain.
+- The preset sidebar's Favorites, Built-in, and Custom groups collapse and expand from their headers, and stay that way across launches.
+- Presets in the sidebar show a delete button on hover, and Add/Remove Favorite and Delete… in their right-click menu. Deleting asks for confirmation; built-in presets are hidden and can be restored from the Preset Browser, and Flat can't be deleted.
 
 ### Changed
 - The + buttons now add a band at 0 dB, taking the edge band's bandwidth and filter type (a Bell when that band is a pass or notch filter), so adding a band no longer changes the sound.
