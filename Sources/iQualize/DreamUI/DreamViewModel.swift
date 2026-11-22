@@ -398,6 +398,7 @@ final class DreamViewModel {
             guard let self else { return }
             let redoPreset = self.audioEngine.activePreset
             self.audioEngine.activePreset = oldPreset
+            self.syncChannelMode(to: oldPreset)
             // Set the dirty flag *before* syncing: syncFromAudioEngine() fires the title-update
             // callback, which must see the corrected isModified value (otherwise the title keeps a
             // stale dirty dot even though Reset is correctly disabled).
@@ -577,14 +578,7 @@ final class DreamViewModel {
         guard let preset = presetStore.preset(for: id) else { return }
         let oldPreset = audioEngine.activePreset
         audioEngine.activePreset = preset
-        // Sync split channel state to match the loaded preset
-        if preset.isSplitChannel {
-            audioEngine.splitChannelActive = true
-            if channel == .linked { channel = .l }
-        } else {
-            audioEngine.splitChannelActive = false
-            channel = .linked
-        }
+        syncChannelMode(to: preset)
         savedSnapshot = preset
         isModified = false
         syncFromAudioEngine()
@@ -596,9 +590,25 @@ final class DreamViewModel {
         guard let snap = savedSnapshot else { return }
         let old = audioEngine.activePreset
         audioEngine.activePreset = snap
+        syncChannelMode(to: snap)
         syncFromAudioEngine()
         isModified = false
         registerUndo(actionName: "Reset Preset", oldPreset: old)
+    }
+
+    /// Puts the channel selector and the engine's split mode in step with `preset` — a split
+    /// preset shows L (or stays on R), a linked one shows Linked — and persists the selector.
+    /// Called wherever a whole preset is swapped in (load, Reset, undo/redo), so a split preset
+    /// is never left playing in Linked mode with its right channel unused, or the reverse.
+    private func syncChannelMode(to preset: EQPresetData) {
+        let split = preset.isSplitChannel
+        // Assign only on change: setting split mode makes the engine re-apply every band, and
+        // undo runs this for every step, not just channel changes.
+        if audioEngine.splitChannelActive != split { audioEngine.splitChannelActive = split }
+        let newChannel: ChannelMode = split ? (channel == .linked ? .l : channel) : .linked
+        guard newChannel != channel else { return }
+        channel = newChannel
+        persistFooterToggles()
     }
 
     func newPreset() {
@@ -1031,6 +1041,10 @@ final class DreamViewModel {
             }
             audioEngine.splitChannelActive = true
         }
+        // Going Linked drops the right channel and splitting copies the left one, so the preset
+        // may no longer match what's saved. Recompute the dirty flag — the title dot and the
+        // "Save changes?" prompt depend on it — before syncing, which refreshes the title.
+        isModified = !contentMatchesSaved(audioEngine.activePreset)
         syncFromAudioEngine()
         persistFooterToggles()
     }

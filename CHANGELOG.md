@@ -15,6 +15,8 @@ All notable changes to iQualize will be documented in this file.
 
 ### Fixed
 - In split L/R mode with the right channel shown, band edits in the EQ window now apply to the right channel. Before, they did nothing or changed the left channel.
+- Switching a preset between Linked and split L/R now counts as an unsaved change, so the preset shows the unsaved dot and you're asked to save before switching away. Before, the switch could be lost without warning.
+- Reset and undo now restore a preset's channel mode along with its bands, so a split preset is no longer left playing in Linked mode with its right channel unused.
 - Band readouts no longer cut values off ("-1…") when there are many bands. Narrow cells switch to compact labels such as "-12.5", "1.25k" and "0.71".
 
 ## [0.60.1] - 2026-08-17
