@@ -29,16 +29,22 @@ final class EQWindowController: NSWindowController {
     var onOpenSettings: (() -> Void)? {
         didSet { viewModel.onOpenSettings = onOpenSettings }
     }
+    /// Callback to open the Room Correction window.
+    var onOpenRoomCorrection: (() -> Void)? {
+        didSet { viewModel.onOpenRoomCorrection = onOpenRoomCorrection }
+    }
     /// Callback fired when the user toggles bypass from this window.
     var onBypassChanged: (() -> Void)? {
         didSet { viewModel.onBypassChanged = onBypassChanged }
     }
 
-    init(audioEngine: AudioEngine, presetStore: PresetStore, settings: SettingsStore) {
+    init(audioEngine: AudioEngine, presetStore: PresetStore, settings: SettingsStore,
+         correctionStore: RoomCorrectionStore) {
         self.audioEngine = audioEngine
         self.presetStore = presetStore
         self.settings = settings
-        self.viewModel = DreamViewModel(audioEngine: audioEngine, presetStore: presetStore, settings: settings)
+        self.viewModel = DreamViewModel(audioEngine: audioEngine, presetStore: presetStore, settings: settings,
+                                        correctionStore: correctionStore)
 
         let (window, toolbarController) = DreamHostingView.makeWindow(viewModel: viewModel)
         self.toolbarController = toolbarController

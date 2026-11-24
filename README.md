@@ -140,6 +140,23 @@ Each band: `frequency` (Hz, 20–20000), `gain` (dB), `bandwidth` (octaves, 0.05
 
 Presets may also carry `inputGainDB` and `outputGainDB` (dB, optional — omitted or absent means 0 dB, and they're only applied when In/Out dB is in per-preset mode; see Settings → General).
 
+### Room Correction
+
+Measure your speakers in your room with a microphone, and iQualize builds an EQ that evens out the room's response. Most of the fix is in the bass: booming room modes and the dips between them.
+
+- Open it from the menu bar (Measure Room…) or the Measure Room… link in the EQ window's footer
+- **Set Up**: pick the microphone. A measurement mic such as a USB miniDSP UMIK-1 is the accurate choice; the built-in mic works as a rough guide. Optionally load the mic's calibration file (miniDSP/UMIK, REW and similar `frequency dB` text files). Check Level plays pink noise and tells you whether the mic hears it clearly without clipping, so you can set the volume first. The sweep plays at the same loudness.
+- **Measure**: each measurement plays a 6-second sine sweep and records it. Measure 3–5 spots around your seat, about 30 cm (1 ft) apart, and they're power-averaged. That gives a correction that holds up as you move, not one tuned to a single point. Other audio is muted while measuring.
+- **Correct**: iQualize fits Bell bands to the averaged response. A graph shows the measured response, the target, the correction, and the predicted result, and the fit updates live as you adjust it:
+  - Correct up to: 500 Hz by default. Above that, a room's response changes within inches, so correcting it only helps the exact spot you measured.
+  - Target bass lift and treble tilt.
+  - Max boost: +3 dB by default. Narrow dips are left alone, since they're cancellations that a boost can't fill.
+  - Max cut, max number of bands, and smoothing (1/3, 1/6 or 1/12 octave).
+- **Use for this device** saves the correction as a layer under every preset, tied to that output device. Switching from Flat to Bass Boost keeps the room corrected, and plugging in headphones (a different device) drops it. The EQ graph shows the active correction as a dashed curve. A Room Correction checkbox in the footer and the menu bar turns it off without deleting it. Bypass turns it off along with everything else.
+- **Save as Preset** turns the bands into an ordinary, editable preset instead
+- Room correction is for speakers. For headphones, use a correction from the Preset Browser's OPRA tab.
+- iQualize asks for microphone access the first time you measure
+
 ### Undo/Redo
 
 - Full undo/redo for all EQ modifications (gain, frequency, bandwidth, reorder, add, delete)
@@ -165,6 +182,7 @@ Presets may also carry `inputGainDB` and `outputGainDB` (dB, optional — omitte
 - Presets submenu with checkmarks and active preset name in parent item — changes sync to the EQ window in real time
 - Bypass EQ toggle (Cmd+B) — pass audio through unprocessed; while bypassed, the Post-EQ spectrum line and its color/fill controls are hidden/disabled (post-EQ would otherwise just mirror pre-EQ)
 - Current output device display, with a pin/unpin item to remember a preset for that specific device
+- Room Correction for This Device toggle (shown once the device has a correction), and Measure Room… to open Room Correction
 - Help… (Cmd+?) — opens an in-app Help window rendering the README's Features section, with a "View latest on GitHub" link
 - About iQualize — shows version and a "View on GitHub" button that opens the project page in your default browser
 

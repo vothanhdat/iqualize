@@ -53,6 +53,10 @@ struct RenderConfiguration: @unchecked Sendable {
     /// requested chain sizes off the real-time path, preserving unlimited bands.
     let biquadChainL: UnsafeMutableRawPointer?
     let biquadChainR: UnsafeMutableRawPointer?
+    /// Renders silence while still draining the capture ring, so the tapped (and therefore
+    /// muted) system audio stays quiet during a room measurement without the ring
+    /// overflowing or the drift policy seeing a stall.
+    let muted: Bool
 
     // These owners are deliberately not read by the render callback. They live
     // inside the published storage so an old snapshot keeps its raw pointers
@@ -73,7 +77,8 @@ struct RenderConfiguration: @unchecked Sendable {
         inputGain: Float,
         volumeCompensation: Float,
         biquadChainL: BiquadFilterChain?,
-        biquadChainR: BiquadFilterChain?
+        biquadChainR: BiquadFilterChain?,
+        muted: Bool = false
     ) {
         self.captureClientOwner = captureClient
         self.biquadChainLOwner = biquadChainL
@@ -88,6 +93,7 @@ struct RenderConfiguration: @unchecked Sendable {
         self.volumeCompensation = volumeCompensation
         self.biquadChainL = biquadChainL.map { Unmanaged.passUnretained($0).toOpaque() }
         self.biquadChainR = biquadChainR.map { Unmanaged.passUnretained($0).toOpaque() }
+        self.muted = muted
     }
 
     /// Test-only owner access. The render callback reads only the raw pointer
@@ -123,6 +129,7 @@ struct RenderConfigurationHandle {
     var volumeCompensation: Float { storage?.pointee.volumeCompensation ?? 1 }
     var biquadChainL: UnsafeMutableRawPointer? { storage?.pointee.biquadChainL }
     var biquadChainR: UnsafeMutableRawPointer? { storage?.pointee.biquadChainR }
+    var muted: Bool { storage?.pointee.muted ?? false }
 
     /// Test-only value access. Production callback code must use the scalar
     /// accessors above so the owner references are never copied on the IO path.
@@ -225,11 +232,12 @@ private func renderCallback(
         scratch.initialize(repeating: 0.0, count: sampleCount)
     }
 
+    let mute: Float = handle.muted ? 0 : 1
     for i in 0..<bufferList.count {
         guard let outData = bufferList[i].mData?.assumingMemoryBound(to: Float.self) else { continue }
         let balance = i == 0 ? handle.balanceLeft : handle.balanceRight
         deinterleaveChannel(scratch, into: outData, channel: i, channelCount: ch,
-                            frames: frames, gain: handle.inputGain * balance * handle.volumeCompensation)
+                            frames: frames, gain: handle.inputGain * balance * handle.volumeCompensation * mute)
     }
 
     // Apply per-channel biquad EQ when a chain is configured — either the whole
@@ -394,6 +402,36 @@ final class AudioEngine {
         didSet { applyBands() }
     }
 
+    /// The output device's room correction, run ahead of the preset's bands in both channel
+    /// modes (see `effectiveBands`). Empty when the device has none or it's turned off.
+    /// Resolved through `correctionProvider` on every output-device change.
+    private(set) var correctionBands: [EQBand] = [] {
+        didSet {
+            // EQBand's == ignores `muted`; a correction never carries muted bands.
+            guard correctionBands != oldValue else { return }
+            applyBands()
+        }
+    }
+
+    /// Resolves the room correction bands for a device UID (nil = none). Wired by the owner
+    /// of `RoomCorrectionStore`, same decoupling as `pinnedPresetProvider`.
+    var correctionProvider: ((String) -> [EQBand]?)?
+
+    /// Re-resolves `correctionBands` for the current output device. Called on device
+    /// changes, and by the owner after it saves, toggles, or removes a correction.
+    func refreshCorrection() {
+        correctionBands = outputDeviceUID.flatMap { correctionProvider?($0) } ?? []
+    }
+
+    /// Silences the rendered system audio while a room measurement plays its sweep through
+    /// its own engine. The capture tap mutes the tapped apps, so this leaves the room quiet.
+    var measurementMuted: Bool = false {
+        didSet {
+            guard measurementMuted != oldValue else { return }
+            publishRenderConfiguration()
+        }
+    }
+
     var inputGainDB: Float = 0.0 {
         didSet { updateInputGain() }
     }
@@ -430,7 +468,8 @@ final class AudioEngine {
             inputGain: renderInputGain,
             volumeCompensation: renderVolumeCompensation,
             biquadChainL: renderBiquadChainL,
-            biquadChainR: renderBiquadChainR
+            biquadChainR: renderBiquadChainR,
+            muted: measurementMuted
         ))
     }
 
@@ -572,6 +611,7 @@ final class AudioEngine {
         // app-imposed cap on band count — only CPU.
         let eqNode = AVAudioUnitEQ(numberOfBands: Self.avEQNativeBandCount)
         self.eq = eqNode
+        lastAppliedNativeBands = nil
         applyBands()
 
         // Peak limiter: dynamic limiting at 0 dBFS (replaces static preamp hack)
@@ -818,13 +858,13 @@ final class AudioEngine {
     /// which has no second, un-muted copy of the bands the way the GUI's own
     /// `pushBandsToEngine` does by zeroing `.gain` in a transient copy while keeping the
     /// real value in `DreamViewModel.bands`).
-    private func effectiveGain(_ band: EQBand) -> Float {
+    nonisolated static func effectiveGain(_ band: EQBand) -> Float {
         band.muted ? 0 : band.gain
     }
 
     private func withEffectiveGain(_ bands: [EQBand]) -> [EQBand] {
         bands.map { band -> EQBand in
-            var b = band; b.gain = effectiveGain(band); return b
+            var b = band; b.gain = Self.effectiveGain(band); return b
         }
     }
 
@@ -850,6 +890,68 @@ final class AudioEngine {
         }
     }
 
+    /// The bands a channel actually runs: the output device's room correction first, then the
+    /// preset's own. The correction is a fixed layer under every preset, so it's prepended
+    /// identically in linked mode and to each channel in split mode.
+    nonisolated static func effectiveBands(correction: [EQBand], preset: [EQBand]) -> [EQBand] {
+        correction + preset
+    }
+
+    /// Whether `bands` leave the signal untouched, so AVAudioUnitEQ can be bypassed outright.
+    /// Same criterion as `EQPresetData.isFlat`, but on effective (mute-aware) gains.
+    nonisolated static func isFlat(_ bands: [EQBand]) -> Bool {
+        bands.allSatisfy { effectiveGain($0) == 0 && $0.filterType == .parametric }
+    }
+
+    /// What AVAudioUnitEQ's slots currently hold, so the next apply writes only the parameters
+    /// that changed. Tracked from what was actually written rather than diffed against the
+    /// previous preset, because the correction layer shifts the preset's bands to later
+    /// slots. nil = the slots' contents are unknown (a fresh AU), so every slot is written.
+    private var lastAppliedNativeBands: [EQBand]?
+
+    /// Writes `bands` into `eq`'s slots, touching only parameters that differ from `previous`
+    /// (what the slots held before), and bypasses every slot past the end of `bands`.
+    /// Writing only changes is what keeps slider drags glitch-free. Returns what the slots
+    /// now hold, to pass as `previous` next time.
+    ///
+    /// A filter-type change rewrites every parameter. AUNBandEQ drops writes to parameters
+    /// the current type doesn't use — bandwidth on a shelf, gain and bandwidth on a
+    /// low/high-pass, gain on a band-pass or notch — and falls back to its defaults for them,
+    /// so a Shelf → Bell change at an unchanged bandwidth would otherwise leave the Bell at
+    /// the AU's default width instead of the band's.
+    @discardableResult
+    static func configureNativeSlots(_ eq: AVAudioUnitEQ, bands: [EQBand],
+                                     previous: [EQBand]?) -> [EQBand] {
+        let count = min(bands.count, eq.bands.count)
+        for i in 0..<count {
+            let band = bands[i]
+            let slot = eq.bands[i]
+            if let previous, i < previous.count, band.filterType == previous[i].filterType {
+                let old = previous[i]
+                if band.frequency != old.frequency { slot.frequency = band.frequency }
+                if effectiveGain(band) != effectiveGain(old) { slot.gain = effectiveGain(band) }
+                if band.bandwidth != old.bandwidth { slot.bandwidth = band.bandwidth }
+            } else if let previous, i < previous.count {
+                // Type changed: set it first, then every parameter under the new type.
+                slot.filterType = band.filterType.avType
+                slot.frequency = band.frequency
+                slot.bandwidth = band.bandwidth
+                slot.gain = effectiveGain(band)
+            } else {
+                // Slot was bypassed or holds unknown values — configure fully.
+                slot.filterType = band.filterType.avType
+                slot.frequency = band.frequency
+                slot.bandwidth = band.bandwidth
+                slot.gain = effectiveGain(band)
+                slot.bypass = false
+            }
+        }
+        for i in count..<eq.bands.count {
+            eq.bands[i].bypass = true
+        }
+        return Array(bands.prefix(count))
+    }
+
     private func applyBands(from old: EQPresetData? = nil) {
         guard let eq else { return }
         let resetState = old.map { $0.id != activePreset.id } ?? false
@@ -857,9 +959,13 @@ final class AudioEngine {
         if splitChannelActive && !bypassed {
             // Split channel mode: bypass AVAudioUnitEQ, use custom biquad chains
             // for the full band lists — already unbounded, no AU capacity involved.
+            // The AU's slots keep their last contents, so `lastAppliedNativeBands`
+            // stays accurate for the next linked-mode apply.
             eq.bypass = true
-            let leftBands = withEffectiveGain(activePreset.bands)
-            let rightBands = withEffectiveGain(activePreset.rightBands ?? activePreset.bands)
+            let leftBands = withEffectiveGain(Self.effectiveBands(
+                correction: correctionBands, preset: activePreset.bands))
+            let rightBands = withEffectiveGain(Self.effectiveBands(
+                correction: correctionBands, preset: activePreset.rightBands ?? activePreset.bands))
             updateBiquadChains(
                 leftBands: leftBands,
                 rightBands: rightBands,
@@ -872,39 +978,16 @@ final class AudioEngine {
             // Self.avEQNativeBandCount bands; any remaining bands run through
             // the biquad chains instead, cascaded ahead of it in the render
             // callback — so band count here is CPU-bound, not AU-bound.
-            let allBands = activePreset.bands
-            let newCount = min(allBands.count, Self.avEQNativeBandCount)
-            let oldCount = min(old?.bands.count ?? 0, Self.avEQNativeBandCount)
+            let allBands = Self.effectiveBands(correction: correctionBands, preset: activePreset.bands)
+            lastAppliedNativeBands = Self.configureNativeSlots(
+                eq,
+                bands: Array(allBands.prefix(Self.avEQNativeBandCount)),
+                previous: lastAppliedNativeBands
+            )
 
-            for i in 0..<newCount {
-                let band = allBands[i]
-                let eqBand = eq.bands[i]
-                if i >= oldCount {
-                    // New band — configure fully
-                    eqBand.filterType = band.filterType.avType
-                    eqBand.frequency = band.frequency
-                    eqBand.bandwidth = band.bandwidth
-                    eqBand.gain = effectiveGain(band)
-                    eqBand.bypass = false
-                } else if let oldBand = old?.bands[i] {
-                    // Existing band — only update changed params
-                    if band.filterType != oldBand.filterType { eqBand.filterType = band.filterType.avType }
-                    if band.frequency != oldBand.frequency { eqBand.frequency = band.frequency }
-                    if effectiveGain(band) != effectiveGain(oldBand) { eqBand.gain = effectiveGain(band) }
-                    if band.bandwidth != oldBand.bandwidth { eqBand.bandwidth = band.bandwidth }
-                }
-            }
-
-            // Bypass AU slots not currently in use (covers both a preset shrinking
-            // and the very first call, where oldCount is 0 and eq.bands defaults
-            // to un-bypassed).
-            if newCount < eq.bands.count {
-                for i in newCount..<eq.bands.count {
-                    eq.bands[i].bypass = true
-                }
-            }
-
-            if allBands.count > Self.avEQNativeBandCount {
+            // The overflow chains run in the render callback, which knows nothing of
+            // Bypass, so a bypassed graph must drop them to stay a true passthrough.
+            if allBands.count > Self.avEQNativeBandCount && !bypassed {
                 let overflowBands = withEffectiveGain(Array(allBands[Self.avEQNativeBandCount...]))
                 updateBiquadChains(
                     leftBands: overflowBands,
@@ -915,16 +998,11 @@ final class AudioEngine {
             } else {
                 renderBiquadChainL = nil
                 renderBiquadChainR = nil
-                publishRenderConfiguration()
-                eq.globalGain = 0
-                eq.bypass = bypassed || activePreset.isFlat
-                limiter?.bypass = !peakLimiter || bypassed
-                return
             }
             publishRenderConfiguration()
 
             eq.globalGain = 0
-            eq.bypass = bypassed || activePreset.isFlat
+            eq.bypass = bypassed || Self.isFlat(allBands)
         }
 
         limiter?.bypass = !peakLimiter || bypassed
@@ -960,6 +1038,9 @@ final class AudioEngine {
         if outputDeviceChanged, let uid, let pinned = pinnedPresetProvider?(uid) {
             activePreset = pinned
             onPinnedPresetApplied?(pinned.id)
+        }
+        if outputDeviceChanged {
+            refreshCorrection()
         }
 
         guard outputDeviceChanged else {

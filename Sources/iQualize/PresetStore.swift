@@ -196,69 +196,30 @@ final class PresetStore {
         }
     }
 
-    /// Decodes one persisted blob. A missing key is normal (fresh install) and returns nil
-    /// silently. A decode failure preserves the raw bytes under a timestamped backup key,
-    /// logs, records a user-facing message in `loadFailures`, and returns nil so the caller
-    /// keeps its default — the damaged original is never the only copy when a later
-    /// `persist*()` overwrites the primary key.
+    /// Decodes one persisted blob (see `PersistedBlob.load`): a decode failure preserves the
+    /// raw bytes and records a message in `loadFailures`, and the caller keeps its default.
     private func loadBlob<T: Decodable>(_ type: T.Type, key: String, describedAs description: String) -> T? {
-        guard let data = defaults.data(forKey: key) else { return nil }
-        do {
-            return try JSONDecoder().decode(type, from: data)
-        } catch {
-            let backupKey = backUpCorruptBlob(data, key: key)
-            os_log(.error, log: storeLog,
-                   "failed to decode %{public}@ (%{public}@): %{public}@ — raw data preserved under %{public}@",
-                   key, description, String(describing: error), backupKey)
-            loadFailures.append("\(description) couldn't be read — original data preserved")
-            return nil
-        }
-    }
-
-    /// Writes the corrupt raw bytes under `<key>.corrupt.<ISO8601 timestamp>`. Backup keys
-    /// are disjoint from every `persist*()` key, so later saves can never clobber them.
-    /// Returns the backup key used.
-    private func backUpCorruptBlob(_ data: Data, key: String) -> String {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        var backupKey = "\(key).corrupt.\(timestamp)"
-        // A stored object at the candidate key means an earlier corruption was already
-        // preserved this second — suffix rather than overwrite an existing backup.
-        var n = 2
-        while defaults.object(forKey: backupKey) != nil {
-            backupKey = "\(key).corrupt.\(timestamp).\(n)"
-            n += 1
-        }
-        defaults.set(data, forKey: backupKey)
-        return backupKey
+        PersistedBlob.load(type, key: key, describedAs: description,
+                           from: defaults, log: storeLog, failures: &loadFailures)
     }
 
     private func persist() {
-        if let data = try? JSONEncoder().encode(customPresets) {
-            defaults.set(data, forKey: Self.key)
-        }
+        PersistedBlob.save(customPresets, key: Self.key, to: defaults)
     }
 
     private func persistFavorites() {
-        if let data = try? JSONEncoder().encode(favoritePresetIDs) {
-            defaults.set(data, forKey: Self.favoritesKey)
-        }
+        PersistedBlob.save(favoritePresetIDs, key: Self.favoritesKey, to: defaults)
     }
 
     private func persistHiddenBuiltIns() {
-        if let data = try? JSONEncoder().encode(hiddenBuiltInPresetIDs) {
-            defaults.set(data, forKey: Self.hiddenBuiltInsKey)
-        }
+        PersistedBlob.save(hiddenBuiltInPresetIDs, key: Self.hiddenBuiltInsKey, to: defaults)
     }
 
     private func persistDevicePins() {
-        if let data = try? JSONEncoder().encode(pinnedPresetIDByDeviceUID) {
-            defaults.set(data, forKey: Self.devicePinsKey)
-        }
+        PersistedBlob.save(pinnedPresetIDByDeviceUID, key: Self.devicePinsKey, to: defaults)
     }
 
     private func persistBuiltInOverrides() {
-        if let data = try? JSONEncoder().encode(builtInOverrides) {
-            defaults.set(data, forKey: Self.builtInOverridesKey)
-        }
+        PersistedBlob.save(builtInOverrides, key: Self.builtInOverridesKey, to: defaults)
     }
 }

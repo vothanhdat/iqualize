@@ -100,9 +100,14 @@ func getDeviceNominalSampleRate(_ deviceID: AudioDeviceID) throws -> Double {
 }
 
 func getDeviceOutputChannelCount(_ deviceID: AudioDeviceID) throws -> UInt32 {
+    try getDeviceChannelCount(deviceID, scope: kAudioDevicePropertyScopeOutput)
+}
+
+/// Total channels across the device's streams in `scope` (input or output).
+func getDeviceChannelCount(_ deviceID: AudioDeviceID, scope: AudioObjectPropertyScope) throws -> UInt32 {
     var address = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyStreamConfiguration,
-        mScope: kAudioDevicePropertyScopeOutput,
+        mScope: scope,
         mElement: kAudioObjectPropertyElementMain
     )
     var size: UInt32 = 0
@@ -134,4 +139,114 @@ func getDefaultOutputDevice() throws -> CoreAudioOutputDevice {
         nominalSampleRate: try? getDeviceNominalSampleRate(deviceID),
         outputChannelCount: try? getDeviceOutputChannelCount(deviceID)
     )
+}
+
+// MARK: - Input devices (Room Correction)
+
+/// Every audio device Core Audio currently lists.
+func getAllAudioDeviceIDs() -> [AudioDeviceID] {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+    var ids = [AudioDeviceID](repeating: AudioDeviceID(kAudioObjectUnknown),
+                              count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+    guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &ids) == noErr else { return [] }
+    return ids
+}
+
+func getDefaultInputDeviceID() -> AudioDeviceID? {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var deviceID = AudioDeviceID(kAudioObjectUnknown)
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
+                                            &address, 0, nil, &size, &deviceID)
+    return status == noErr && deviceID != kAudioObjectUnknown ? deviceID : nil
+}
+
+/// `kAudioDeviceTransportType*` for the device (built-in, USB, Bluetooth, …), if known.
+func getDeviceTransportType(_ deviceID: AudioDeviceID) -> UInt32? {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyTransportType,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var transport: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &transport) == noErr else { return nil }
+    return transport
+}
+
+/// The active data source in `scope` (e.g. `'hdpn'` when built-in output is on headphones).
+func getDeviceDataSource(_ deviceID: AudioDeviceID, scope: AudioObjectPropertyScope) -> UInt32? {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDataSource,
+        mScope: scope,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var source: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &source) == noErr else { return nil }
+    return source
+}
+
+/// A microphone Room Correction can record from.
+struct AudioInputDevice: Identifiable, Equatable, Sendable {
+    let id: AudioDeviceID
+    let uid: String
+    let name: String
+    let transportType: UInt32?
+    let isDefault: Bool
+
+    var isBuiltIn: Bool { transportType == kAudioDeviceTransportTypeBuiltIn }
+    var isBluetooth: Bool {
+        transportType == kAudioDeviceTransportTypeBluetooth || transportType == kAudioDeviceTransportTypeBluetoothLE
+    }
+}
+
+/// Devices with at least one input channel, default first, then by name. Aggregate and
+/// virtual devices are left out: a measurement needs a real microphone.
+func listAudioInputDevices() -> [AudioInputDevice] {
+    let defaultID = getDefaultInputDeviceID()
+    return getAllAudioDeviceIDs()
+        .compactMap { id -> AudioInputDevice? in
+            guard let channels = try? getDeviceChannelCount(id, scope: kAudioDevicePropertyScopeInput),
+                  channels > 0,
+                  let uid = try? getDeviceUID(id),
+                  let name = try? getDeviceName(id) else { return nil }
+            let transport = getDeviceTransportType(id)
+            if transport == kAudioDeviceTransportTypeAggregate || transport == kAudioDeviceTransportTypeVirtual {
+                return nil
+            }
+            return AudioInputDevice(id: id, uid: uid, name: name, transportType: transport, isDefault: id == defaultID)
+        }
+        .sorted { lhs, rhs in
+            if lhs.isDefault != rhs.isDefault { return lhs.isDefault }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        }
+}
+
+/// Why the current output is a poor fit for room correction, if it is: headphones and
+/// Bluetooth headsets aren't speakers in a room.
+func roomCorrectionOutputWarning(for deviceID: AudioDeviceID) -> String? {
+    let transport = getDeviceTransportType(deviceID)
+    if transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE {
+        return "This output is a Bluetooth device. If it's headphones, room correction won't help — "
+            + "use the Preset Browser's OPRA tab for a headphone correction instead."
+    }
+    // 'hdpn': the built-in output's headphone jack.
+    if transport == kAudioDeviceTransportTypeBuiltIn,
+       getDeviceDataSource(deviceID, scope: kAudioDevicePropertyScopeOutput) == 0x6864_706E {
+        return "The output is the headphone jack. Room correction is for speakers — for headphones, "
+            + "use the Preset Browser's OPRA tab instead."
+    }
+    return nil
 }

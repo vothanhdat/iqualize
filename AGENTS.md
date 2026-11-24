@@ -91,6 +91,10 @@ If the app fails to launch ("can't be opened" error), debug and fix before proce
 - `Sources/iQualize/BiquadResponse.swift` — biquad filter frequency response calculation (Audio EQ Cookbook)
 - `Sources/iQualize/SpectrumAnalyzer.swift` — real-time FFT spectrum analysis via Accelerate vDSP
 - `Sources/iQualize/SpectrumData.swift` — lock-free double-buffered audio-to-UI data transfer
+- `Sources/iQualize/RoomCorrection.swift` — per-output-device room correction model + store; `AudioEngine.effectiveBands` runs it ahead of the preset's bands
+- `Sources/iQualize/RoomMeasurementSession.swift` — mic measurement: sweep playback on its own engine, AudioQueue recording, level check
+- `Sources/iQualize/ImpulseResponseAnalysis.swift` / `SweepSignal.swift` / `CorrectionFitter.swift` — pure DSP: sweep deconvolution → smoothed response → fitted Bell bands
+- `Sources/iQualize/RoomCorrectionWindowController.swift` + `DreamUI/RoomCorrectionView.swift` — the Room Correction wizard window
 - `Sources/iQualize/ColorHex.swift` — NSColor ↔ #RRGGBB sRGB hex helpers for persisting user-picked spectrum colors
 - `Sources/iQualize/HelpRenderer.swift` — extracts the README's Features section and renders it as HTML via swift-markdown
 - `Sources/iQualize/HelpWindowController.swift` — WKWebView-based Help window; intercepts link clicks to open them in the default browser

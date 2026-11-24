@@ -28,10 +28,11 @@ if [[ "$SIGN_ID" == Developer\ ID\ Application:* ]]; then
     # Notarized Developer ID builds must use the hardened runtime and must not
     # carry the debug-only get-task-allow entitlement. Local Apple Development
     # and ad-hoc installs keep the existing entitlement so debugging behavior is
-    # unchanged during development.
+    # unchanged during development. The app still needs audio-input: under the
+    # hardened runtime, Room Correction's microphone would otherwise record silence.
     SIGN_OPTIONS=(--options runtime)
     HELPER_ENTITLEMENTS=()
-    APP_ENTITLEMENTS=()
+    APP_ENTITLEMENTS=(--entitlements iQualize-release.entitlements)
 fi
 
 # IQ_UNIVERSAL=1 builds both slices (Apple Silicon + Intel) — used for

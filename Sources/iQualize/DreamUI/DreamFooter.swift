@@ -34,8 +34,11 @@ struct DreamFooter: View {
                 Spacer()
             }
 
-            // Row 3 — output device, centered beneath the controls.
-            outputLabel
+            // Row 3 — output device, centered beneath the controls, with its room correction.
+            HStack(spacing: 10) {
+                outputLabel
+                roomCorrectionControls
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -215,6 +218,30 @@ struct DreamFooter: View {
             .truncationMode(.tail)
             .frame(maxWidth: 320)
             .help(outputLabelText)
+    }
+
+    // MARK: - Room correction
+
+    /// The correction toggle shows only for a device that has one; the measure button is
+    /// always there, since measuring is how a device gets one.
+    @ViewBuilder
+    private var roomCorrectionControls: some View {
+        let correction = vm.roomCorrectionForCurrentDevice
+        if let correction {
+            DreamCheckbox(title: "Room Correction", isOn: Binding(
+                get: { correction.isEnabled },
+                set: { vm.setRoomCorrectionEnabled($0) }
+            ), disabled: vm.bypass)
+            .help(vm.bypass
+                ? "Bypass passes the room correction through too."
+                : "Applies the room correction measured for \(correction.deviceName) under every preset.")
+        }
+        Button(correction == nil ? "Measure Room…" : "Re-measure…") {
+            vm.onOpenRoomCorrection?()
+        }
+        .buttonStyle(.link)
+        .font(.system(size: 11))
+        .help("Measure this output with a microphone and build a room correction for it")
     }
 
     // MARK: - Format

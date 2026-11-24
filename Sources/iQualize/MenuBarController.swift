@@ -19,11 +19,15 @@ final class MenuBarController: NSObject, NSMenuDelegate, CLICommandHandling {
     private var settingsWindowController: SettingsWindowController?
     private var helpWindowController: HelpWindowController?
     private var diagnosticsWindowController: DiagnosticsWindowController?
+    private let correctionStore: RoomCorrectionStore
+    private var roomCorrectionWindowController: RoomCorrectionWindowController?
 
-    init(audioEngine: AudioEngine, presetStore: PresetStore, settings: SettingsStore) {
+    init(audioEngine: AudioEngine, presetStore: PresetStore, settings: SettingsStore,
+         correctionStore: RoomCorrectionStore) {
         self.audioEngine = audioEngine
         self.presetStore = presetStore
         self.settings = settings
+        self.correctionStore = correctionStore
         super.init()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -46,6 +50,11 @@ final class MenuBarController: NSObject, NSMenuDelegate, CLICommandHandling {
         audioEngine.onPinnedPresetApplied = { [weak self] id in
             self?.settings.set(\.selectedPresetID, id)
         }
+        // The room correction follows the output device the same way.
+        audioEngine.correctionProvider = { [weak correctionStore] uid in
+            correctionStore?.activeBands(forDeviceUID: uid)
+        }
+        audioEngine.refreshCorrection()
 
         // Restore saved state — a device pin for the current output takes priority over
         // the last-selected preset, since it's an explicit user choice. Capture starts per
@@ -173,7 +182,20 @@ final class MenuBarController: NSObject, NSMenuDelegate, CLICommandHandling {
             }
             pinItem.target = self
             menu.addItem(pinItem)
+
+            if let correction = correctionStore.correction(forDeviceUID: uid) {
+                let correctionItem = NSMenuItem(title: "Room Correction for This Device",
+                                                action: #selector(toggleRoomCorrection(_:)), keyEquivalent: "")
+                correctionItem.target = self
+                correctionItem.state = correction.isEnabled ? .on : .off
+                menu.addItem(correctionItem)
+            }
         }
+
+        let measureItem = NSMenuItem(title: "Measure Room…",
+                                     action: #selector(openRoomCorrection(_:)), keyEquivalent: "")
+        measureItem.target = self
+        menu.addItem(measureItem)
 
         addRuntimeStatusSection(to: menu)
 
@@ -267,15 +289,35 @@ final class MenuBarController: NSObject, NSMenuDelegate, CLICommandHandling {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func toggleRoomCorrection(_ sender: NSMenuItem) {
+        guard let uid = audioEngine.outputDeviceUID,
+              let correction = correctionStore.correction(forDeviceUID: uid) else { return }
+        correctionStore.setEnabled(!correction.isEnabled, forDeviceUID: uid)
+        audioEngine.refreshCorrection()
+    }
+
+    @objc private func openRoomCorrection(_ sender: Any?) {
+        if roomCorrectionWindowController == nil {
+            roomCorrectionWindowController = RoomCorrectionWindowController(
+                audioEngine: audioEngine, presetStore: presetStore, correctionStore: correctionStore)
+        }
+        roomCorrectionWindowController?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     func showDiagnostics() {
         openDiagnostics(NSMenuItem())
     }
 
     func openEQWindow() {
         if eqWindowController == nil {
-            eqWindowController = EQWindowController(audioEngine: audioEngine, presetStore: presetStore, settings: settings)
+            eqWindowController = EQWindowController(audioEngine: audioEngine, presetStore: presetStore,
+                                                    settings: settings, correctionStore: correctionStore)
             eqWindowController?.onOpenSettings = { [weak self] in
                 self?.openSettings(NSMenuItem())
+            }
+            eqWindowController?.onOpenRoomCorrection = { [weak self] in
+                self?.openRoomCorrection(nil)
             }
             eqWindowController?.onBypassChanged = { [weak self] in
                 guard let self = self else { return }

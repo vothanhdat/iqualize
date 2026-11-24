@@ -13,6 +13,7 @@ final class DreamViewModel {
     let audioEngine: AudioEngine
     let presetStore: PresetStore
     let settings: SettingsStore
+    let correctionStore: RoomCorrectionStore
 
     /// Window's undo manager — set by EQWindowController once the window exists.
     @ObservationIgnored
@@ -27,6 +28,10 @@ final class DreamViewModel {
     /// Callback fired when the toolbar's Settings gear is tapped.
     @ObservationIgnored
     var onOpenSettings: (() -> Void)?
+
+    /// Callback fired when the footer's Measure Room… button is tapped.
+    @ObservationIgnored
+    var onOpenRoomCorrection: (() -> Void)?
 
     /// Callback fired when the user toggles bypass from the footer (so the menu bar can refresh).
     @ObservationIgnored
@@ -103,6 +108,25 @@ final class DreamViewModel {
         }
     }
 
+    /// The current output device's room correction, if one was measured for it.
+    var roomCorrectionForCurrentDevice: RoomCorrection? {
+        guard let uid = audioEngine.outputDeviceUID else { return nil }
+        return correctionStore.correction(forDeviceUID: uid)
+    }
+
+    /// Turns the current device's room correction on or off (the measurement is kept).
+    func setRoomCorrectionEnabled(_ enabled: Bool) {
+        guard let uid = audioEngine.outputDeviceUID else { return }
+        correctionStore.setEnabled(enabled, forDeviceUID: uid)
+        audioEngine.refreshCorrection()
+    }
+
+    /// Correction bands the canvas traces under the preset curve. Bypass passes the
+    /// correction through too, so nothing is shown while bypassed.
+    var visibleCorrectionBands: [EQBand] {
+        bypass ? [] : audioEngine.correctionBands
+    }
+
     // Computed
     var canUndo: Bool { undoManager?.canUndo ?? false }
     var canRedo: Bool { undoManager?.canRedo ?? false }
@@ -128,10 +152,12 @@ final class DreamViewModel {
 
     // MARK: - Init
 
-    init(audioEngine: AudioEngine, presetStore: PresetStore, settings: SettingsStore) {
+    init(audioEngine: AudioEngine, presetStore: PresetStore, settings: SettingsStore,
+         correctionStore: RoomCorrectionStore) {
         self.audioEngine = audioEngine
         self.presetStore = presetStore
         self.settings = settings
+        self.correctionStore = correctionStore
         loadPersistedState()
         syncFromAudioEngine(initial: true)
     }

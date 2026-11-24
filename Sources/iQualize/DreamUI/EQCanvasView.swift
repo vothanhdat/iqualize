@@ -302,6 +302,22 @@ struct EQCanvasView: View {
             ctx.stroke(line, with: .color(Color(rgba: 0x60a5fa, a: strokeAlpha)), lineWidth: isSel ? 1.2 : 0.7)
         }
 
+        // Room correction running under the preset — display only, so it reads as a thin
+        // dashed trace beneath the editable curve rather than as more bands.
+        let correctionBands = vm.visibleCorrectionBands
+        if !correctionBands.isEmpty {
+            var correctionPts: [CGPoint] = []
+            let N = 200
+            for i in 0...N {
+                let x = CGFloat(i) / CGFloat(N) * W
+                let f = xToFreq(x, W: W)
+                let total = correctionBands.reduce(0.0) { $0 + bandResponseDB(f: f, band: $1) }
+                correctionPts.append(CGPoint(x: x, y: gainToY(total, H: H, maxDB: displayMax)))
+            }
+            ctx.stroke(smoothPath(pts: correctionPts), with: .color(ink(0.5)),
+                       style: StrokeStyle(lineWidth: 1.2, lineJoin: .round, dash: [5, 4]))
+        }
+
         // Composite EQ curve
         let sampleN = 280
         var samples: [CGPoint] = []

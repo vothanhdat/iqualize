@@ -2,7 +2,16 @@
 
 All notable changes to iQualize will be documented in this file.
 
-## [0.61.0] - 2026-11-22
+## [0.62.0] - 2026-11-24
+
+### Added
+- Room Correction measures your speakers in your room and builds an EQ that evens out the room's response. It plays a sine sweep, records it with a microphone, and averages several listening positions. Then it fits Bell bands toward an adjustable target, cutting peaks and boosting only broad dips. Mic calibration files are supported, and a level check comes before measuring. Open it from Measure Room… in the menu bar or the EQ window's footer.
+- A room correction runs as its own layer under every preset and follows the output device it was measured on. Switching presets keeps the room corrected, and changing to another output drops it. The EQ graph shows it as a dashed curve, and it can be turned off from the footer or menu bar without deleting it. It can also be saved as an ordinary preset instead.
+
+### Fixed
+- Bypass now passes audio through untouched when a preset has more than 31 bands. Before, the bands past the 31st kept processing while bypassed.
+- Changing a band's filter type now applies its bandwidth and gain under the new type. Before, switching a High or Low Shelf to a Bell left the Bell at the equalizer's default width (0.5 octave) until the bandwidth was changed, and switching from a pass filter could likewise drop the band's gain.
+
 
 ### Added
 - A × on the selected or hovered band's gain readout removes that band.

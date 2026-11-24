@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var menuBarController: MenuBarController!
     private var audioEngine: AudioEngine!
     private var presetStore: PresetStore!
+    private var correctionStore: RoomCorrectionStore!
     private var cliControlServer: CLIControlServer!
     private let settings: SettingsStore
 
@@ -27,7 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         audioEngine = AudioEngine()
         presetStore = PresetStore()
-        menuBarController = MenuBarController(audioEngine: audioEngine, presetStore: presetStore, settings: settings)
+        correctionStore = RoomCorrectionStore()
+        menuBarController = MenuBarController(audioEngine: audioEngine, presetStore: presetStore,
+                                              settings: settings, correctionStore: correctionStore)
 
         cliControlServer = CLIControlServer(handler: menuBarController)
         cliControlServer.start()
