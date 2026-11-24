@@ -172,6 +172,7 @@ final class DreamToolbarController: NSObject, NSToolbarDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(withTitle: "Save As…", action: #selector(saveAsTapped), keyEquivalent: "S").target = self
+        menu.addItem(withTitle: "Rename…", action: #selector(renameTapped), keyEquivalent: "").target = self
         if vm.isBuiltIn && vm.presetStore.hasOverride(vm.activePresetID) {
             menu.addItem(withTitle: "Reset to Original", action: #selector(resetToOriginalTapped), keyEquivalent: "").target = self
         }
@@ -205,6 +206,7 @@ final class DreamToolbarController: NSObject, NSToolbarDelegate {
     @objc private func settingsTapped() { vm.onOpenSettings?() }
 
     @objc private func saveAsTapped() { vm.presentSaveAsDialog() }
+    @objc private func renameTapped() { vm.renamePreset(id: vm.activePresetID) }
     @objc private func resetToOriginalTapped() { vm.resetActiveBuiltInToOriginal() }
     @objc private func importTapped() { vm.importPresets() }
     @objc private func presetBrowserTapped() { vm.showPresetBrowser() }

@@ -2,6 +2,11 @@
 
 All notable changes to iQualize will be documented in this file.
 
+## [0.64.0] - 2026-11-24
+
+### Added
+- Rename presets from the EQ window: Rename… in the preset sidebar's right-click menu and in the Save button's menu. Built-in presets can be renamed too, and Reset to Original restores their name. Renaming the preset you're editing doesn't save or discard your unsaved changes, and a name another preset already uses is refused.
+
 ## [0.63.0] - 2026-11-24
 
 ### Added

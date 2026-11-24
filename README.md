@@ -109,6 +109,7 @@ open /Applications/iQualize.app
 
 - Built-in presets: Flat, Bass Boost, Vocal Clarity, Loudness, Treble Boost, Podcast, Techno, Deep House, Hard Techno, Minimal, American Rap, German Rap, Luzifer's Void, DEADBEEF, 0xDEADBEEF
 - Create, rename, overwrite, and delete custom presets
+- Rename any preset from the sidebar's right-click menu or the Save button's menu (Rename…). Built-in presets can be renamed too; Reset to Original brings the built-in name back. Renaming the preset you're editing keeps your unsaved changes unsaved
 - Built-in presets can be deleted too (except Flat) if you don't want them cluttering your picker — bring a deleted one back anytime from the Preset Browser's iQualize tab
 - Built-in presets auto-fork when edited (non-destructive)
 - In/Out dB gain can be stored per-preset (default) or shared globally across all presets — see Settings → General
@@ -117,7 +118,7 @@ open /Applications/iQualize.app
 - Preset Browser: an OPRA tab to search and import community headphone/IEM EQ profiles directly from the [OPRA](https://opra.roon.app/) database, and an iQualize tab to restore any built-in presets you've deleted
 - Quick switching from the menu bar or EQ window picker — both use the same native preset picker, with Favorites, Built-in, and Custom sections
 - Favorite presets (star icon, or ⌥-click a preset) to pin them to the top of the picker for one-click switching
-- Preset sidebar in the EQ window: the Favorites, Built-in, and Custom groups collapse from their headers (remembered across launches), and each preset shows a delete button on hover, with Favorite and Delete… in its right-click menu
+- Preset sidebar in the EQ window: the Favorites, Built-in, and Custom groups collapse from their headers (remembered across launches), and each preset shows a delete button on hover, with Favorite, Rename…, and Delete… in its right-click menu
 - Pin a preset to an output device (pin button in the EQ window toolbar, or from the menu bar) — it's recalled automatically whenever that device becomes the active audio output, including at launch
 
 #### Preset Format

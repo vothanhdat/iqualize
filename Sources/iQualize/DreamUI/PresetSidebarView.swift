@@ -6,7 +6,8 @@ import SwiftUI
 /// (`confirmDiscardIfNeeded`) applies exactly as it does for the toolbar menu.
 ///
 /// Each group collapses from its header (remembered across launches), and each row offers
-/// Delete on hover and in its context menu, with the toolbar's confirmation (`vm.deletePreset`).
+/// Delete on hover and in its context menu, with the toolbar's confirmation (`vm.deletePreset`),
+/// plus Rename… in the context menu (`vm.renamePreset`).
 @available(macOS 14.2, *)
 @MainActor
 struct PresetSidebarView: View {
@@ -47,6 +48,7 @@ struct PresetSidebarView: View {
                     isFavorite: vm.presetStore.isFavorite(preset.id),
                     canDelete: vm.canDeletePreset(id: preset.id),
                     onToggleFavorite: { vm.presetStore.toggleFavorite(preset.id) },
+                    onRename: { vm.renamePreset(id: preset.id) },
                     onDelete: { vm.deletePreset(id: preset.id) }
                 )
                 .tag(preset.id)
@@ -65,6 +67,7 @@ private struct PresetSidebarRow: View {
     let isFavorite: Bool
     let canDelete: Bool
     let onToggleFavorite: () -> Void
+    let onRename: () -> Void
     let onDelete: () -> Void
 
     @State private var hover = false
@@ -95,6 +98,7 @@ private struct PresetSidebarRow: View {
         .onHover { hover = $0 }
         .contextMenu {
             Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", action: onToggleFavorite)
+            Button("Rename…", action: onRename)
             if canDelete {
                 Divider()
                 Button("Delete…", role: .destructive, action: onDelete)

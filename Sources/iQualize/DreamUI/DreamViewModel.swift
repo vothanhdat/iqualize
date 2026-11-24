@@ -782,6 +782,80 @@ final class DreamViewModel {
         }
     }
 
+    // MARK: - Rename
+
+    enum PresetNameError: Error, Equatable {
+        case empty
+        case taken(String)
+
+        var message: String {
+            switch self {
+            case .empty: "A preset needs a name."
+            case .taken(let name): "A preset named \"\(name)\" already exists. Choose a different name."
+            }
+        }
+    }
+
+    /// The trimmed new name for preset `id`, or why it can't be used: empty, or already taken
+    /// by another preset (compared case-insensitively, as the CLI does). Keeping its own name
+    /// is fine.
+    static func validatedPresetName(_ raw: String, renaming id: UUID,
+                                    among presets: [EQPresetData]) -> Result<String, PresetNameError> {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return .failure(.empty) }
+        if let clash = presets.first(where: { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            return .failure(.taken(clash.name))
+        }
+        return .success(name)
+    }
+
+    /// Asks for a new name for preset `id` and applies it.
+    func renamePreset(id: UUID) {
+        guard let preset = presetStore.preset(for: id) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename \"\(preset.name)\""
+        alert.informativeText = preset.isBuiltIn
+            ? "Enter a new name. Reset to Original brings back the built-in name."
+            : "Enter a new name for this preset:"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        nameField.stringValue = preset.name
+        alert.accessoryView = nameField
+        alert.window.initialFirstResponder = nameField
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        switch Self.validatedPresetName(nameField.stringValue, renaming: id, among: presetStore.allPresets) {
+        case .success(let name):
+            applyRename(id: id, to: name)
+        case .failure(let error):
+            let problem = NSAlert()
+            problem.messageText = "Couldn't rename \"\(preset.name)\""
+            problem.informativeText = error.message
+            problem.runModal()
+        }
+    }
+
+    /// Saves just the new name — for a built-in, as an in-place edit like any other — and
+    /// leaves the bands as saved. When it's the active preset, the editor keeps any unsaved
+    /// band edits: the dirty flag tracks the curve, not the name.
+    func applyRename(id: UUID, to name: String) {
+        guard var stored = presetStore.preset(for: id), stored.name != name else { return }
+        stored.name = name
+        if stored.isBuiltIn {
+            presetStore.saveBuiltInOverride(stored)
+        } else {
+            presetStore.saveCustomPreset(stored)
+        }
+        guard id == activePresetID else { return }
+        var active = audioEngine.activePreset
+        active.name = name
+        audioEngine.activePreset = active
+        savedSnapshot?.name = name
+        presetName = name
+        onTitleShouldUpdate?()
+    }
+
     private func performDeleteCurrentPreset() {
         guard activePresetID != EQPresetData.flat.id else { return }
         if isBuiltIn {
