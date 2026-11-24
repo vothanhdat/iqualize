@@ -9,13 +9,72 @@ struct CorrectionFitSettings: Codable, Equatable, Sendable {
     /// Boosts are capped low: a dip is usually a cancellation, and boosting it spends
     /// amplifier headroom without filling it.
     var maxBoostDB: Double = 3
+    /// Deepest total cut. One band stops at `EQBand.gainRange` (−24 dB); deeper cuts take
+    /// two overlapping bands.
     var maxCutDB: Double = 12
     var maxBands: Int = 10
+    /// Narrowest band the fit may use. High Q lets a narrow room mode get a narrow cut;
+    /// the default matches the fitter's long-standing 0.1-octave floor.
+    var maxQ: Double = 14
+    /// A fixed 12 dB/octave high-pass added to the correction at this frequency, to keep
+    /// small woofers from being driven by bass they can't play (it only cuts what they'd
+    /// turn into distortion). nil = none.
+    var protectionHighPassHz: Double?
+
+    /// Where the protection high-pass sits relative to the speakers' roll-off: low enough
+    /// that it barely touches what they do play.
+    static let protectionHighPassRatio = 0.7
+    /// Butterworth (Q 0.707) in the app's octave bandwidth convention.
+    static let protectionHighPassBandwidth: Float = 1.9
 
     static let upperHzRange: ClosedRange<Double> = 200...20000
-    static let maxBoostRange: ClosedRange<Double> = 0...6
-    static let maxCutRange: ClosedRange<Double> = 3...24
+    static let maxBoostRange: ClosedRange<Double> = 0...12
+    static let maxCutRange: ClosedRange<Double> = 3...30
     static let maxBandsRange: ClosedRange<Int> = 1...20
+    static let maxQRange: ClosedRange<Double> = 1...30
+    /// Boosts beyond this eat headroom and push speakers hard; the window warns past it.
+    static let boostWarningDB = 6.0
+
+    init(lowerHz: Double = 20, upperHz: Double = 500, maxBoostDB: Double = 3, maxCutDB: Double = 12,
+         maxBands: Int = 10, maxQ: Double = 14, protectionHighPassHz: Double? = nil) {
+        self.lowerHz = lowerHz
+        self.upperHz = upperHz
+        self.maxBoostDB = maxBoostDB
+        self.maxCutDB = maxCutDB
+        self.maxBands = maxBands
+        self.maxQ = maxQ
+        self.protectionHighPassHz = protectionHighPassHz
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lowerHz, upperHz, maxBoostDB, maxCutDB, maxBands, maxQ, protectionHighPassHz
+    }
+
+    /// Settings saved by an older version lack the newer fields; they get the defaults.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = CorrectionFitSettings()
+        lowerHz = try c.decodeIfPresent(Double.self, forKey: .lowerHz) ?? defaults.lowerHz
+        upperHz = try c.decodeIfPresent(Double.self, forKey: .upperHz) ?? defaults.upperHz
+        maxBoostDB = try c.decodeIfPresent(Double.self, forKey: .maxBoostDB) ?? defaults.maxBoostDB
+        maxCutDB = try c.decodeIfPresent(Double.self, forKey: .maxCutDB) ?? defaults.maxCutDB
+        maxBands = try c.decodeIfPresent(Int.self, forKey: .maxBands) ?? defaults.maxBands
+        maxQ = try c.decodeIfPresent(Double.self, forKey: .maxQ) ?? defaults.maxQ
+        protectionHighPassHz = try c.decodeIfPresent(Double.self, forKey: .protectionHighPassHz)
+    }
+
+    /// The band widths the fit may use, in octaves: from `maxQ`'s width up to 3 octaves.
+    var bandwidthRange: ClosedRange<Double> {
+        let q = min(max(maxQ, Self.maxQRange.lowerBound), Self.maxQRange.upperBound)
+        let narrowest = Double(EQBand.qToOctaves(Float(q)))
+        return min(narrowest, CorrectionFitter.widestBandwidthOctaves)...CorrectionFitter.widestBandwidthOctaves
+    }
+
+    /// Per-band gain limits: the boost/cut settings, within what one EQ band can do.
+    var bandGainRange: ClosedRange<Double> {
+        let gain = EQBand.gainRange
+        return max(-maxCutDB, Double(gain.lowerBound))...min(maxBoostDB, Double(gain.upperBound))
+    }
 }
 
 extension BiquadResponse {
@@ -75,16 +134,21 @@ enum CorrectionFitter {
     static let toleranceDB = 1.0
     /// Dips narrower than this (at half depth) are left alone.
     static let narrowestBoostOctaves = 1.0 / 3.0
-    static let bandwidthRange: ClosedRange<Double> = 0.1...3
+    static let widestBandwidthOctaves = 3.0
     /// Weight of correction outside the range relative to error inside it.
     static let spillWeight = 0.5
+    /// Weight of a boost spilling below the range — into bass the speakers can't play,
+    /// when the target has a roll-off — where it costs headroom and adds distortion.
+    static let lowBoostSpillWeight = 3.0
 
     static func fit(measured: FrequencyCurve, target: CorrectionTarget,
                     settings: CorrectionFitSettings, sampleRate: Double) -> Result {
         let freqs = measured.frequencies
         let targetCurve = target.curve(on: freqs)
-        let lower = max(20, min(settings.lowerHz, settings.upperHz))
         let upper = min(20000, max(settings.lowerHz, settings.upperHz))
+        // Nothing below the speakers' roll-off is corrected: the target already falls away
+        // there, and no band may sit below it.
+        let lower = min(upper, max(20, settings.lowerHz, target.effectiveBassRolloffHz ?? 0))
 
         // 1. Level alignment.
         let reference: ClosedRange<Double> = upper <= 1000
@@ -97,14 +161,18 @@ enum CorrectionFitter {
         let aligned = measured.offset(by: -levelOffset)
         let error = deviation.offset(by: -levelOffset)
 
-        var problem = Problem(error: error, lower: lower, upper: upper,
+        let fixed = settings.protectionHighPassHz.map {
+            [EQBand(frequency: Float(min(max($0, 15), 300)), gain: 0,
+                    bandwidth: CorrectionFitSettings.protectionHighPassBandwidth, filterType: .highPass)]
+        } ?? []
+        var problem = Problem(error: error, lower: lower, upper: upper, fixed: fixed,
                               settings: settings, sampleRate: sampleRate)
         // Round to values that read cleanly in the band readouts, and drop bands the
         // refinement left doing nothing.
-        let bands = problem.solve()
+        let fitted = problem.solve()
             .map(rounded)
             .filter { abs($0.gain) >= 0.3 }
-            .sorted { $0.frequency < $1.frequency }
+        let bands = (fixed + fitted).sorted { $0.frequency < $1.frequency }
 
         let correction = FrequencyCurve(frequencies: freqs, dB: freqs.map {
             BiquadResponse.magnitudeDB(for: bands, frequency: $0, sampleRate: sampleRate)
@@ -154,14 +222,18 @@ enum CorrectionFitter {
         let cosW: [Double]
         let cos2W: [Double]
         let inRange: [Bool]
-        /// Correction wanted at each point (0 outside the range).
+        /// Points below the range, where boosts cost `lowBoostSpillWeight`.
+        let belowRange: [Bool]
+        /// Response of the bands the fit must work around (the protection high-pass).
+        let fixedResponse: [Double]
+        /// Correction wanted at each point (outside the range: only the fixed bands' response).
         var desired: [Double]
         var weights: [Double]
         let bounds: [ClosedRange<Double>]
         let settings: CorrectionFitSettings
         let sampleRate: Double
 
-        init(error: FrequencyCurve, lower: Double, upper: Double,
+        init(error: FrequencyCurve, lower: Double, upper: Double, fixed: [EQBand],
              settings: CorrectionFitSettings, sampleRate: Double) {
             // Fit on the range plus 1.5 octaves either side, where spill is penalised.
             let margin = pow(2, 1.5)
@@ -173,6 +245,12 @@ enum CorrectionFitter {
             cosW = freqs.map { cos(2 * Double.pi * $0 / sampleRate) }
             cos2W = freqs.map { cos(4 * Double.pi * $0 / sampleRate) }
             inRange = freqs.map { $0 >= lower && $0 <= upper }
+            belowRange = freqs.map { $0 < lower }
+            let fixedCoefficients = fixed.map { BiquadResponse.coefficients(for: $0, sampleRate: sampleRate) }
+            let cosW = self.cosW, cos2W = self.cos2W
+            fixedResponse = freqs.indices.map { i in
+                fixedCoefficients.reduce(0) { $0 + BiquadResponse.magnitudeDB($1, cosW: cosW[i], cos2W: cos2W[i]) }
+            }
 
             // Dips are judged on a ⅓-octave average, so a narrow cancellation asks for
             // little or no boost while a broad sag still gets one.
@@ -183,12 +261,16 @@ enum CorrectionFitter {
                     ? max(-err[i], -settings.maxCutDB)
                     : min(max(-wide[i], 0), settings.maxBoostDB)
             }
+            // Outside the range the only correction wanted is the fixed high-pass's own cut.
+            for i in freqs.indices where !inRange[i] {
+                desired[i] = fixedResponse[i]
+            }
             self.desired = desired
             weights = inRange.map { $0 ? 1 : CorrectionFitter.spillWeight }
             bounds = [
                 log2(lower)...log2(upper),
-                -settings.maxCutDB...settings.maxBoostDB,
-                log2(CorrectionFitter.bandwidthRange.lowerBound)...log2(CorrectionFitter.bandwidthRange.upperBound),
+                settings.bandGainRange,
+                log2(settings.bandwidthRange.lowerBound)...log2(settings.bandwidthRange.upperBound),
             ]
             self.settings = settings
             self.sampleRate = sampleRate
@@ -244,7 +326,10 @@ enum CorrectionFitter {
             var j = 0.0
             for i in total.indices {
                 let r = total[i] - desired[i]
-                j += weights[i] * r * r
+                // Below the range, only what the fitted bands add counts as a boost — the
+                // fixed high-pass cutting there is intended.
+                let boosting = belowRange[i] && total[i] - fixedResponse[i] > 0
+                j += (boosting ? CorrectionFitter.lowBoostSpillWeight : weights[i]) * r * r
             }
             return j
         }
@@ -253,7 +338,7 @@ enum CorrectionFitter {
             guard settings.maxBands > 0, !freqs.isEmpty else { return [] }
             var params: [Params] = []
             var responses: [[Double]] = []
-            var total = [Double](repeating: 0, count: freqs.count)
+            var total = fixedResponse
             var excluded = [Bool](repeating: false, count: freqs.count)
 
             var attempts = 0
@@ -300,8 +385,8 @@ enum CorrectionFitter {
                 let p = Params(
                     logF: log2(freqs[best]),
                     gain: min(max(g, bounds[1].lowerBound), bounds[1].upperBound),
-                    logBW: log2(min(max(widthOctaves, CorrectionFitter.bandwidthRange.lowerBound),
-                                    CorrectionFitter.bandwidthRange.upperBound))
+                    logBW: log2(min(max(widthOctaves, settings.bandwidthRange.lowerBound),
+                                    settings.bandwidthRange.upperBound))
                 )
                 let r = response(p)
                 params.append(p)

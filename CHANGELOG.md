@@ -2,6 +2,18 @@
 
 All notable changes to iQualize will be documented in this file.
 
+## [0.63.0] - 2026-11-24
+
+### Added
+- Room Correction can measure the left and right speakers separately and give each its own correction, for speakers that sit differently in the room. Each speaker's correction runs on its own channel under any preset, in Linked or split L/R mode. The Correct step points out when one speaker plays louder at your seat. Saving as a preset makes a split L/R preset.
+- Room Correction respects small speakers' bass limits. It detects where the speakers' bass falls 6 dB below their midrange, or you can set the limit by hand in 5 Hz steps from 25 to 200 Hz, with a warning below 50 Hz. The target rolls off below the limit and the correction won't boost there. An optional high-pass at 0.7× the limit (on by default) keeps that bass from straining small woofers. The graph shades the region below the limit.
+
+- Room Correction has a Max Q control (1–30, default 14), so narrow room modes can get narrow cuts.
+
+### Changed
+- Room Correction's Max boost now goes up to +12 dB, with a warning above +6 dB. Max cut now goes down to −30 dB; a single band still stops at −24 dB, so deeper cuts take two bands.
+- The EQ graph shows separate dashed traces for the left and right corrections in Linked view, and the viewed speaker's trace in L or R view.
+
 ## [0.62.0] - 2026-11-24
 
 ### Added

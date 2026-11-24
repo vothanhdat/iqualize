@@ -207,6 +207,11 @@ struct AudioInputDevice: Identifiable, Equatable, Sendable {
     let isDefault: Bool
 
     var isBuiltIn: Bool { transportType == kAudioDeviceTransportTypeBuiltIn }
+    /// An iPhone used as a microphone through Continuity.
+    var isContinuity: Bool {
+        transportType == kAudioDeviceTransportTypeContinuityCaptureWired
+            || transportType == kAudioDeviceTransportTypeContinuityCaptureWireless
+    }
     var isBluetooth: Bool {
         transportType == kAudioDeviceTransportTypeBluetooth || transportType == kAudioDeviceTransportTypeBluetoothLE
     }

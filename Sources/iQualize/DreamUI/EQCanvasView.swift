@@ -303,9 +303,10 @@ struct EQCanvasView: View {
         }
 
         // Room correction running under the preset — display only, so it reads as a thin
-        // dashed trace beneath the editable curve rather than as more bands.
-        let correctionBands = vm.visibleCorrectionBands
-        if !correctionBands.isEmpty {
+        // dashed trace beneath the editable curve rather than as more bands. Separate left
+        // and right corrections in Linked view get one trace each, dashed differently.
+        for (setIndex, correctionBands) in vm.visibleCorrectionBandSets.enumerated()
+            where !correctionBands.isEmpty {
             var correctionPts: [CGPoint] = []
             let N = 200
             for i in 0...N {
@@ -315,7 +316,8 @@ struct EQCanvasView: View {
                 correctionPts.append(CGPoint(x: x, y: gainToY(total, H: H, maxDB: displayMax)))
             }
             ctx.stroke(smoothPath(pts: correctionPts), with: .color(ink(0.5)),
-                       style: StrokeStyle(lineWidth: 1.2, lineJoin: .round, dash: [5, 4]))
+                       style: StrokeStyle(lineWidth: 1.2, lineJoin: .round,
+                                          dash: setIndex == 0 ? [5, 4] : [1.5, 3]))
         }
 
         // Composite EQ curve

@@ -121,10 +121,17 @@ final class DreamViewModel {
         audioEngine.refreshCorrection()
     }
 
-    /// Correction bands the canvas traces under the preset curve. Bypass passes the
-    /// correction through too, so nothing is shown while bypassed.
-    var visibleCorrectionBands: [EQBand] {
-        bypass ? [] : audioEngine.correctionBands
+    /// Correction band sets the canvas traces under the preset curve: the viewed channel's in
+    /// L or R view, both speakers' in Linked view when they differ, one shared set otherwise.
+    /// Bypass passes the correction through too, so nothing is shown while bypassed.
+    var visibleCorrectionBandSets: [[EQBand]] {
+        let correction = audioEngine.correction
+        guard !bypass, !correction.isEmpty else { return [] }
+        switch channel {
+        case .l: return [correction.left]
+        case .r: return [correction.right]
+        case .linked: return correction.isSplit ? [correction.left, correction.right] : [correction.left]
+        }
     }
 
     // Computed

@@ -89,6 +89,58 @@ final class CorrectionFitterTests: XCTestCase {
         }
     }
 
+    // MARK: - Q and gain limits
+
+    private func q(_ band: EQBand) -> Double { octavesToQ(Double(band.bandwidth)) }
+
+    /// A narrow, strong room mode needs a high-Q cut. Raising Max Q lets the fit use one;
+    /// lowering it keeps every band at or below the limit.
+    func testMaxQBoundsHowNarrowBandsGet() throws {
+        let mode = [EQBand(frequency: 45, gain: 12, bandwidth: Float(EQBand.qToOctaves(22)))]
+        let measured = curve(of: mode)
+        var settings = CorrectionFitSettings()
+        settings.maxQ = 30
+        let narrow = CorrectionFitter.fit(measured: measured, target: .flat, settings: settings, sampleRate: sampleRate)
+        XCTAssertTrue(narrow.bands.allSatisfy { q($0) <= 30.5 })
+        XCTAssertGreaterThan(try XCTUnwrap(narrow.bands.map(q).max()), 14, "the mode needs more than the old Q 14")
+
+        settings.maxQ = 5
+        let wide = CorrectionFitter.fit(measured: measured, target: .flat, settings: settings, sampleRate: sampleRate)
+        XCTAssertFalse(wide.bands.isEmpty)
+        XCTAssertTrue(wide.bands.allSatisfy { q($0) <= 5.1 }, "\(wide.bands.map(q))")
+    }
+
+    func testBoostCanReachTwelveDecibels() {
+        let broadDip = [EQBand(frequency: 120, gain: -11, bandwidth: 1.5)]
+        var settings = CorrectionFitSettings()
+        settings.maxBoostDB = 12
+        let result = CorrectionFitter.fit(measured: curve(of: broadDip), target: .flat,
+                                          settings: settings, sampleRate: sampleRate)
+        let biggest = result.bands.map(\.gain).max() ?? 0
+        XCTAssertGreaterThan(biggest, 6)
+        XCTAssertLessThanOrEqual(biggest, 12.05)
+    }
+
+    /// A single band stops at −24 dB, so a cut deeper than that takes two bands.
+    func testCutsDeeperThanOneBandStayWithinEachBandsRange() {
+        let hugeMode = [EQBand(frequency: 60, gain: 24, bandwidth: 0.5), EQBand(frequency: 60, gain: 4, bandwidth: 0.5)]
+        var settings = CorrectionFitSettings()
+        settings.maxCutDB = 30
+        let result = CorrectionFitter.fit(measured: curve(of: hugeMode), target: .flat,
+                                          settings: settings, sampleRate: sampleRate)
+        XCTAssertTrue(result.bands.allSatisfy { $0.gain >= EQBand.gainRange.lowerBound })
+        XCTAssertLessThan(result.correction.value(at: 60), -24.5)
+    }
+
+    func testSettingsSavedBeforeMaxQDecodeWithDefaults() throws {
+        let json = #"{"lowerHz": 20, "upperHz": 400, "maxBoostDB": 2, "maxCutDB": 10, "maxBands": 8}"#
+        let settings = try JSONDecoder().decode(CorrectionFitSettings.self, from: Data(json.utf8))
+        XCTAssertEqual(settings.upperHz, 400)
+        XCTAssertEqual(settings.maxBands, 8)
+        XCTAssertEqual(settings.maxQ, CorrectionFitSettings().maxQ)
+        XCTAssertNil(settings.protectionHighPassHz)
+    }
+
     // MARK: - Target
 
     func testTargetShape() {

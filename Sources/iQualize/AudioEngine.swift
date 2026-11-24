@@ -402,25 +402,25 @@ final class AudioEngine {
         didSet { applyBands() }
     }
 
-    /// The output device's room correction, run ahead of the preset's bands in both channel
-    /// modes (see `effectiveBands`). Empty when the device has none or it's turned off.
-    /// Resolved through `correctionProvider` on every output-device change.
-    private(set) var correctionBands: [EQBand] = [] {
+    /// The output device's room correction, per speaker, run ahead of the preset's bands in
+    /// both channel modes (see `linkedRouting`). Empty when the device has none or it's
+    /// turned off. Resolved through `correctionProvider` on every output-device change.
+    private(set) var correction: CorrectionBands = .none {
         didSet {
             // EQBand's == ignores `muted`; a correction never carries muted bands.
-            guard correctionBands != oldValue else { return }
+            guard correction != oldValue else { return }
             applyBands()
         }
     }
 
-    /// Resolves the room correction bands for a device UID (nil = none). Wired by the owner
-    /// of `RoomCorrectionStore`, same decoupling as `pinnedPresetProvider`.
-    var correctionProvider: ((String) -> [EQBand]?)?
+    /// Resolves the room correction for a device UID (nil = none). Wired by the owner of
+    /// `RoomCorrectionStore`, same decoupling as `pinnedPresetProvider`.
+    var correctionProvider: ((String) -> CorrectionBands?)?
 
-    /// Re-resolves `correctionBands` for the current output device. Called on device
-    /// changes, and by the owner after it saves, toggles, or removes a correction.
+    /// Re-resolves `correction` for the current output device. Called on device changes,
+    /// and by the owner after it saves, toggles, or removes a correction.
     func refreshCorrection() {
-        correctionBands = outputDeviceUID.flatMap { correctionProvider?($0) } ?? []
+        correction = outputDeviceUID.flatMap { correctionProvider?($0) } ?? .none
     }
 
     /// Silences the rendered system audio while a room measurement plays its sweep through
@@ -897,6 +897,30 @@ final class AudioEngine {
         correction + preset
     }
 
+    /// Where each band runs in linked mode: AVAudioUnitEQ's slots (shared by both channels),
+    /// and each channel's biquad chain in the render callback.
+    struct LinkedRouting: Equatable {
+        var native: [EQBand]
+        var left: [EQBand]
+        var right: [EQBand]
+    }
+
+    /// Linked mode. A correction shared by both speakers runs ahead of the preset in the AU's
+    /// slots like any other band. A split correction can't — the AU filters both channels
+    /// alike — so each speaker's correction runs in its own channel's biquad chain, and the
+    /// preset keeps the AU. Bands past the AU's capacity overflow into both chains either way.
+    nonisolated static func linkedRouting(preset: [EQBand], correction: CorrectionBands,
+                                          nativeCapacity: Int) -> LinkedRouting {
+        let shared = correction.isSplit ? [] : correction.left
+        let all = effectiveBands(correction: shared, preset: preset)
+        let native = Array(all.prefix(nativeCapacity))
+        let overflow = Array(all.dropFirst(nativeCapacity))
+        guard correction.isSplit else {
+            return LinkedRouting(native: native, left: overflow, right: overflow)
+        }
+        return LinkedRouting(native: native, left: correction.left + overflow, right: correction.right + overflow)
+    }
+
     /// Whether `bands` leave the signal untouched, so AVAudioUnitEQ can be bypassed outright.
     /// Same criterion as `EQPresetData.isFlat`, but on effective (mute-aware) gains.
     nonisolated static func isFlat(_ bands: [EQBand]) -> Bool {
@@ -963,9 +987,9 @@ final class AudioEngine {
             // stays accurate for the next linked-mode apply.
             eq.bypass = true
             let leftBands = withEffectiveGain(Self.effectiveBands(
-                correction: correctionBands, preset: activePreset.bands))
+                correction: correction.left, preset: activePreset.bands))
             let rightBands = withEffectiveGain(Self.effectiveBands(
-                correction: correctionBands, preset: activePreset.rightBands ?? activePreset.bands))
+                correction: correction.right, preset: activePreset.rightBands ?? activePreset.bands))
             updateBiquadChains(
                 leftBands: leftBands,
                 rightBands: rightBands,
@@ -975,23 +999,24 @@ final class AudioEngine {
             publishRenderConfiguration()
         } else {
             // Linked mode: AVAudioUnitEQ natively processes the first
-            // Self.avEQNativeBandCount bands; any remaining bands run through
-            // the biquad chains instead, cascaded ahead of it in the render
-            // callback — so band count here is CPU-bound, not AU-bound.
-            let allBands = Self.effectiveBands(correction: correctionBands, preset: activePreset.bands)
+            // Self.avEQNativeBandCount bands; any remaining bands — and a split room
+            // correction — run through the per-channel biquad chains instead, cascaded
+            // ahead of it in the render callback, so band count here is CPU-bound, not
+            // AU-bound.
+            let routing = Self.linkedRouting(preset: activePreset.bands, correction: correction,
+                                             nativeCapacity: Self.avEQNativeBandCount)
             lastAppliedNativeBands = Self.configureNativeSlots(
                 eq,
-                bands: Array(allBands.prefix(Self.avEQNativeBandCount)),
+                bands: routing.native,
                 previous: lastAppliedNativeBands
             )
 
-            // The overflow chains run in the render callback, which knows nothing of
-            // Bypass, so a bypassed graph must drop them to stay a true passthrough.
-            if allBands.count > Self.avEQNativeBandCount && !bypassed {
-                let overflowBands = withEffectiveGain(Array(allBands[Self.avEQNativeBandCount...]))
+            // The chains run in the render callback, which knows nothing of Bypass, so a
+            // bypassed graph must drop them to stay a true passthrough.
+            if (!routing.left.isEmpty || !routing.right.isEmpty) && !bypassed {
                 updateBiquadChains(
-                    leftBands: overflowBands,
-                    rightBands: overflowBands,
+                    leftBands: withEffectiveGain(routing.left),
+                    rightBands: withEffectiveGain(routing.right),
                     sampleRate: outputSampleRate,
                     resetState: resetState
                 )
@@ -1002,7 +1027,7 @@ final class AudioEngine {
             publishRenderConfiguration()
 
             eq.globalGain = 0
-            eq.bypass = bypassed || Self.isFlat(allBands)
+            eq.bypass = bypassed || Self.isFlat(routing.native)
         }
 
         limiter?.bypass = !peakLimiter || bypassed

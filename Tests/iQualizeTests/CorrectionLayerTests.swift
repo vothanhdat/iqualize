@@ -21,6 +21,51 @@ final class CorrectionLayerTests: XCTestCase {
         XCTAssertEqual(AudioEngine.effectiveBands(correction: [], preset: preset), preset)
     }
 
+    // MARK: - Linked-mode routing
+
+    func testSharedCorrectionRunsInTheAUAheadOfThePreset() {
+        let routing = AudioEngine.linkedRouting(preset: preset, correction: CorrectionBands(shared: correction),
+                                                nativeCapacity: 31)
+        XCTAssertEqual(routing.native, correction + preset)
+        XCTAssertTrue(routing.left.isEmpty)
+        XCTAssertTrue(routing.right.isEmpty)
+    }
+
+    /// The AU filters both channels alike, so per-speaker corrections go to each channel's
+    /// biquad chain and the preset keeps the AU.
+    func testSplitCorrectionRunsInEachChannelsChain() {
+        let right = [EQBand(frequency: 63, gain: -6, bandwidth: 0.4)]
+        let routing = AudioEngine.linkedRouting(preset: preset,
+                                                correction: CorrectionBands(left: correction, right: right),
+                                                nativeCapacity: 31)
+        XCTAssertEqual(routing.native, preset)
+        XCTAssertEqual(routing.left, correction)
+        XCTAssertEqual(routing.right, right)
+    }
+
+    func testOverflowReachesBothChainsAfterASplitCorrection() {
+        let right = [EQBand(frequency: 63, gain: -6, bandwidth: 0.4)]
+        let routing = AudioEngine.linkedRouting(preset: preset,
+                                                correction: CorrectionBands(left: correction, right: right),
+                                                nativeCapacity: 1)
+        XCTAssertEqual(routing.native, [preset[0]])
+        XCTAssertEqual(routing.left, correction + [preset[1]])
+        XCTAssertEqual(routing.right, right + [preset[1]])
+    }
+
+    func testSharedCorrectionOverflowsLikeAnyBand() {
+        let routing = AudioEngine.linkedRouting(preset: preset, correction: CorrectionBands(shared: correction),
+                                                nativeCapacity: 3)
+        XCTAssertEqual(routing.native, correction + [preset[0]])
+        XCTAssertEqual(routing.left, [preset[1]])
+        XCTAssertEqual(routing.right, [preset[1]])
+    }
+
+    func testNoCorrectionLeavesThePresetAlone() {
+        let routing = AudioEngine.linkedRouting(preset: preset, correction: .none, nativeCapacity: 31)
+        XCTAssertEqual(routing, AudioEngine.LinkedRouting(native: preset, left: [], right: []))
+    }
+
     func testFlatnessCountsTheCorrection() {
         let flatPreset = EQPresetData.flat.bands
         XCTAssertTrue(AudioEngine.isFlat(AudioEngine.effectiveBands(correction: [], preset: flatPreset)))

@@ -7,6 +7,19 @@ import os.log
 
 private let measurementLog = OSLog(subsystem: "com.iqualize", category: "roomMeasurement")
 
+/// Which speaker a sweep plays through, or a response belongs to.
+enum SpeakerChannel: String, CaseIterable, Sendable {
+    case both, left, right
+
+    var label: String {
+        switch self {
+        case .both: "Both speakers"
+        case .left: "Left speaker"
+        case .right: "Right speaker"
+        }
+    }
+}
+
 /// Drives a room measurement: a level check, then one sweep per microphone position.
 ///
 /// The sweep plays through its own short-lived AVAudioEngine on the default output. The
@@ -38,10 +51,18 @@ final class RoomMeasurementSession {
         var verdict: LevelVerdict
     }
 
-    /// One recorded sweep: the unsmoothed, uncalibrated response at one mic position.
+    /// Measure both speakers playing together (one correction for both), or each speaker on
+    /// its own (a correction per speaker, for speakers that sit differently in the room).
+    enum MeasurementMode: String, CaseIterable, Sendable {
+        case together, separate
+    }
+
+    /// One mic position: the unsmoothed, uncalibrated response per measured channel — `.both`
+    /// when measured together, `.left` and `.right` when measured separately.
     struct Position: Identifiable, Equatable {
         let id = UUID()
-        let response: FrequencyCurve
+        let responses: [SpeakerChannel: FrequencyCurve]
+        /// Loudest sample across this position's sweeps.
         let peakDBFS: Float
         var clipped: Bool { peakDBFS > -0.5 }
     }
@@ -56,6 +77,15 @@ final class RoomMeasurementSession {
     private static let tailSeconds = 1.0
 
     private(set) var activity: Activity = .idle
+    /// The speaker the sweep in progress is playing through.
+    private(set) var measuringChannel: SpeakerChannel?
+    /// Changing it discards measurements taken the other way; the UI only offers it when
+    /// there are none.
+    var mode: MeasurementMode = .together {
+        didSet {
+            if mode != oldValue { positions.removeAll() }
+        }
+    }
     private(set) var inputDevices: [AudioInputDevice] = []
     var selectedInputUID: String?
     private(set) var outputDeviceName: String = ""
@@ -132,10 +162,20 @@ final class RoomMeasurementSession {
         player?.stop()
     }
 
-    /// The averaged, calibrated, smoothed room response — what the fitter corrects — or nil
-    /// before the first measurement.
-    func roomResponse(smoothing fraction: Double) -> FrequencyCurve? {
-        guard var average = ImpulseResponseAnalysis.powerAverage(positions.map(\.response)) else { return nil }
+    /// The channels a fit needs: one shared correction, or one per speaker.
+    var fitChannels: [SpeakerChannel] { mode == .together ? [.both] : [.left, .right] }
+
+    /// The averaged, calibrated, smoothed room response for `channel` — what the fitter
+    /// corrects — or nil before the first measurement. In separate mode, `.both` averages
+    /// the two speakers (used to find where their bass rolls off).
+    func roomResponse(_ channel: SpeakerChannel = .both, smoothing fraction: Double) -> FrequencyCurve? {
+        let curves = positions.flatMap { position -> [FrequencyCurve] in
+            if channel == .both && mode == .separate {
+                return [position.responses[.left], position.responses[.right]].compactMap { $0 }
+            }
+            return position.responses[channel].map { [$0] } ?? []
+        }
+        guard var average = ImpulseResponseAnalysis.powerAverage(curves) else { return nil }
         if let calibration {
             average = calibration.applied(to: average)
         }
@@ -155,7 +195,7 @@ final class RoomMeasurementSession {
             let noiseSeconds = 2.5
             let noise = SweepSignal.pinkNoise(duration: noiseSeconds, sampleRate: rate,
                                               amplitudeDBFS: Self.levelCheckRMSDBFS, seed: 1)
-            let capture = try await capture(noise, sampleRate: rate, player: player, device: device)
+            let capture = try await capture(noise, sampleRate: rate, channel: .both, player: player, device: device)
 
             let rec = capture.recording
             let floor = ImpulseResponseAnalysis.rmsLevelDBFS(Array(rec.prefix(capture.preRollFrames)))
@@ -183,33 +223,42 @@ final class RoomMeasurementSession {
 
     private func runMeasurement(device: AudioInputDevice) async {
         guard await ensurePermission() else { return }
-        activity = .measuring
         errorMessage = nil
         defer { finish() }
         do {
-            let player = SweepPlayer()
-            let rate = player.outputSampleRate
-            let parameters = SweepParameters.standard(sampleRate: rate, duration: Self.sweepDuration,
-                                                      amplitude: Self.sweepAmplitude)
-            let capture = try await capture(SweepSignal.sweep(parameters), sampleRate: rate,
-                                            player: player, device: device)
-            let peak = ImpulseResponseAnalysis.peakLevelDBFS(capture.recording)
-            guard peak > -60 else {
-                errorMessage = "The microphone barely heard the sweep. Check that the right microphone "
-                    + "is selected and turn the volume up a little."
-                return
-            }
+            var responses: [SpeakerChannel: FrequencyCurve] = [:]
+            var peak: Float = -.infinity
+            var rate = sweepSampleRate
+            // Together: one sweep through both speakers. Separate: left, then right.
+            for channel in fitChannels {
+                activity = .measuring
+                measuringChannel = channel
+                let player = SweepPlayer()
+                rate = player.outputSampleRate
+                let parameters = SweepParameters.standard(sampleRate: rate, duration: Self.sweepDuration,
+                                                          amplitude: Self.sweepAmplitude)
+                let capture = try await capture(SweepSignal.sweep(parameters), sampleRate: rate,
+                                                channel: channel, player: player, device: device)
+                let sweepPeak = ImpulseResponseAnalysis.peakLevelDBFS(capture.recording)
+                guard sweepPeak > -60 else {
+                    errorMessage = "The microphone barely heard the sweep"
+                        + (channel == .both ? "" : " from the \(channel == .left ? "left" : "right") speaker")
+                        + ". Check that the right microphone is selected and turn the volume up a little."
+                    return
+                }
+                peak = max(peak, sweepPeak)
 
-            activity = .analyzing
-            let recording = capture.recording
-            let micRate = capture.micRate
-            let response = await Task.detached(priority: .userInitiated) {
-                ImpulseResponseAnalysis.magnitudeResponse(recording: recording, recordingRate: micRate,
-                                                          sweep: parameters)
-            }.value
-            try Task.checkCancellation()
+                activity = .analyzing
+                let recording = capture.recording
+                let micRate = capture.micRate
+                responses[channel] = await Task.detached(priority: .userInitiated) {
+                    ImpulseResponseAnalysis.magnitudeResponse(recording: recording, recordingRate: micRate,
+                                                              sweep: parameters)
+                }.value
+                try Task.checkCancellation()
+            }
             sweepSampleRate = rate
-            positions.append(Position(response: response, peakDBFS: peak))
+            positions.append(Position(responses: responses, peakDBFS: peak))
             if peak > -0.5 {
                 errorMessage = "That sweep clipped the microphone, so this position is unreliable. "
                     + "Turn the volume down, remove it, and measure again."
@@ -222,6 +271,7 @@ final class RoomMeasurementSession {
 
     private func finish() {
         activity = .idle
+        measuringChannel = nil
         liveLevelDBFS = -120
         task = nil
     }
@@ -251,8 +301,8 @@ final class RoomMeasurementSession {
     /// Records from `device` while playing `signal`, with a short pre-roll for the noise
     /// floor and a tail for the room (and the output's latency) to finish. System audio is
     /// muted throughout and restored however this exits.
-    private func capture(_ signal: [Float], sampleRate: Double, player: SweepPlayer,
-                         device: AudioInputDevice) async throws -> Capture {
+    private func capture(_ signal: [Float], sampleRate: Double, channel: SpeakerChannel,
+                         player: SweepPlayer, device: AudioInputDevice) async throws -> Capture {
         let micRate = (try? getDeviceNominalSampleRate(device.id)).flatMap { $0 > 0 ? $0 : nil } ?? 48000
         let recorder = MicRecorder(deviceUID: device.uid, sampleRate: micRate)
         self.recorder = recorder
@@ -277,7 +327,7 @@ final class RoomMeasurementSession {
 
         try await Task.sleep(for: .seconds(Self.preRollSeconds))
         let preRoll = recorder.frameCount
-        try player.play(signal, sampleRate: sampleRate)
+        try player.play(signal, sampleRate: sampleRate, channel: channel)
         try await Task.sleep(for: .seconds(Double(signal.count) / sampleRate + Self.tailSeconds))
         let recording = recorder.stop()
         os_log(.default, log: measurementLog, "captured %{public}d frames at %{public}.0f Hz from %{public}@",
@@ -304,7 +354,8 @@ final class SweepPlayer {
         return rate > 0 ? rate : 48000
     }
 
-    func play(_ samples: [Float], sampleRate: Double) throws {
+    /// Plays `samples` through `channel` — both speakers, or one with the other silent.
+    func play(_ samples: [Float], sampleRate: Double, channel: SpeakerChannel) throws {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))
         else {
@@ -312,9 +363,19 @@ final class SweepPlayer {
                           userInfo: [NSLocalizedDescriptionKey: "Couldn't prepare the test signal"])
         }
         buffer.frameLength = AVAudioFrameCount(samples.count)
+        let playing: [Int] = switch channel {
+        case .both: [0, 1]
+        case .left: [0]
+        case .right: [1]
+        }
         samples.withUnsafeBufferPointer { src in
-            for channel in 0..<2 {
-                buffer.floatChannelData![channel].update(from: src.baseAddress!, count: samples.count)
+            for index in 0..<2 {
+                let destination = buffer.floatChannelData![index]
+                if playing.contains(index) {
+                    destination.update(from: src.baseAddress!, count: samples.count)
+                } else {
+                    destination.update(repeating: 0, count: samples.count)
+                }
             }
         }
         engine.attach(node)

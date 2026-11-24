@@ -33,7 +33,7 @@ final class RoomCorrectionStoreTests: XCTestCase {
 
         let reloaded = RoomCorrectionStore(userDefaults: defaults)
         XCTAssertEqual(reloaded.correction(forDeviceUID: "BuiltInSpeakerDevice"), correction)
-        XCTAssertEqual(reloaded.activeBands(forDeviceUID: "BuiltInSpeakerDevice"), correction.bands)
+        XCTAssertEqual(reloaded.activeBands(forDeviceUID: "BuiltInSpeakerDevice"), CorrectionBands(shared: correction.bands))
         XCTAssertTrue(reloaded.loadFailures.isEmpty)
     }
 
@@ -42,8 +42,8 @@ final class RoomCorrectionStoreTests: XCTestCase {
         store.save(makeCorrection(device: "A", bands: [EQBand(frequency: 50, gain: -3)]))
         store.save(makeCorrection(device: "B", bands: [EQBand(frequency: 90, gain: -5)]))
 
-        XCTAssertEqual(store.activeBands(forDeviceUID: "A")?.first?.frequency, 50)
-        XCTAssertEqual(store.activeBands(forDeviceUID: "B")?.first?.frequency, 90)
+        XCTAssertEqual(store.activeBands(forDeviceUID: "A")?.left.first?.frequency, 50)
+        XCTAssertEqual(store.activeBands(forDeviceUID: "B")?.left.first?.frequency, 90)
         XCTAssertNil(store.activeBands(forDeviceUID: "Headphones"))
     }
 
@@ -52,7 +52,7 @@ final class RoomCorrectionStoreTests: XCTestCase {
         store.save(makeCorrection(bands: [EQBand(frequency: 50, gain: -3)]))
         store.save(makeCorrection(bands: [EQBand(frequency: 70, gain: -2)]))
         XCTAssertEqual(store.correctionsByDeviceUID.count, 1)
-        XCTAssertEqual(store.activeBands(forDeviceUID: "BuiltInSpeakerDevice")?.first?.frequency, 70)
+        XCTAssertEqual(store.activeBands(forDeviceUID: "BuiltInSpeakerDevice")?.left.first?.frequency, 70)
     }
 
     func testDisabledCorrectionIsKeptButNotApplied() {
@@ -79,6 +79,23 @@ final class RoomCorrectionStoreTests: XCTestCase {
         let store = RoomCorrectionStore(userDefaults: defaults)
         store.save(makeCorrection(bands: []))
         XCTAssertNil(store.activeBands(forDeviceUID: "BuiltInSpeakerDevice"))
+    }
+
+    func testSeparateLeftAndRightCorrectionsRoundTrip() throws {
+        let store = RoomCorrectionStore(userDefaults: defaults)
+        let left = [EQBand(frequency: 48, gain: -7, bandwidth: 0.4)]
+        let right = [EQBand(frequency: 62, gain: -5, bandwidth: 0.5), EQBand(frequency: 140, gain: 2)]
+        store.save(RoomCorrection(name: "Room", deviceUID: "Speakers", deviceName: "Speakers",
+                                  bands: left, rightBands: right))
+
+        let reloaded = RoomCorrectionStore(userDefaults: defaults)
+        let correction = try XCTUnwrap(reloaded.correction(forDeviceUID: "Speakers"))
+        XCTAssertTrue(correction.isSplit)
+        XCTAssertEqual(correction.bandCount, 3)
+        let active = try XCTUnwrap(reloaded.activeBands(forDeviceUID: "Speakers"))
+        XCTAssertEqual(active.left, left)
+        XCTAssertEqual(active.right, right)
+        XCTAssertTrue(active.isSplit)
     }
 
     func testCorruptBlobIsPreservedAndReported() {
