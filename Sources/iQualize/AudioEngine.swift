@@ -943,35 +943,47 @@ final class AudioEngine {
     /// low/high-pass, gain on a band-pass or notch — and falls back to its defaults for them,
     /// so a Shelf → Bell change at an unchanged bandwidth would otherwise leave the Bell at
     /// the AU's default width instead of the band's.
+    /// Writes one AUNBandEQ parameter for `slot` straight to the audio unit. Slot writes skip
+    /// AVAudioUnitEQ's per-band wrapper: on macOS 26 it ignores a write whose value matches
+    /// one it wrote before, even when the audio unit discarded that earlier write (gain on a
+    /// low-pass, bandwidth on a shelf), which left slots at the audio unit's defaults.
+    static func setSlotParameter(_ eq: AVAudioUnitEQ, _ base: AudioUnitParameterID, slot: Int, _ value: Float) {
+        AudioUnitSetParameter(eq.audioUnit, base + AudioUnitParameterID(slot), kAudioUnitScope_Global, 0, value, 0)
+    }
+
+    /// Reads one AUNBandEQ parameter for `slot` from the audio unit itself.
+    static func slotParameter(_ eq: AVAudioUnitEQ, _ base: AudioUnitParameterID, slot: Int) -> Float {
+        var value: AudioUnitParameterValue = 0
+        AudioUnitGetParameter(eq.audioUnit, base + AudioUnitParameterID(slot), kAudioUnitScope_Global, 0, &value)
+        return value
+    }
+
     @discardableResult
     static func configureNativeSlots(_ eq: AVAudioUnitEQ, bands: [EQBand],
                                      previous: [EQBand]?) -> [EQBand] {
         let count = min(bands.count, eq.bands.count)
+        func set(_ base: AudioUnitParameterID, _ i: Int, _ value: Float) {
+            setSlotParameter(eq, base, slot: i, value)
+        }
         for i in 0..<count {
             let band = bands[i]
-            let slot = eq.bands[i]
             if let previous, i < previous.count, band.filterType == previous[i].filterType {
                 let old = previous[i]
-                if band.frequency != old.frequency { slot.frequency = band.frequency }
-                if effectiveGain(band) != effectiveGain(old) { slot.gain = effectiveGain(band) }
-                if band.bandwidth != old.bandwidth { slot.bandwidth = band.bandwidth }
-            } else if let previous, i < previous.count {
-                // Type changed: set it first, then every parameter under the new type.
-                slot.filterType = band.filterType.avType
-                slot.frequency = band.frequency
-                slot.bandwidth = band.bandwidth
-                slot.gain = effectiveGain(band)
+                if band.frequency != old.frequency { set(kAUNBandEQParam_Frequency, i, band.frequency) }
+                if effectiveGain(band) != effectiveGain(old) { set(kAUNBandEQParam_Gain, i, effectiveGain(band)) }
+                if band.bandwidth != old.bandwidth { set(kAUNBandEQParam_Bandwidth, i, band.bandwidth) }
             } else {
-                // Slot was bypassed or holds unknown values — configure fully.
-                slot.filterType = band.filterType.avType
-                slot.frequency = band.frequency
-                slot.bandwidth = band.bandwidth
-                slot.gain = effectiveGain(band)
-                slot.bypass = false
+                // New slot, or the type changed: set the type first, then every parameter
+                // under it.
+                set(kAUNBandEQParam_FilterType, i, Float(band.filterType.avType.rawValue))
+                set(kAUNBandEQParam_Frequency, i, band.frequency)
+                set(kAUNBandEQParam_Bandwidth, i, band.bandwidth)
+                set(kAUNBandEQParam_Gain, i, effectiveGain(band))
+                set(kAUNBandEQParam_BypassBand, i, 0)
             }
         }
         for i in count..<eq.bands.count {
-            eq.bands[i].bypass = true
+            set(kAUNBandEQParam_BypassBand, i, 1)
         }
         return Array(bands.prefix(count))
     }

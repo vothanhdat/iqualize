@@ -1,4 +1,5 @@
 import AVFAudio
+import AudioToolbox
 import XCTest
 @testable import iQualize
 
@@ -85,7 +86,7 @@ final class CorrectionLayerTests: XCTestCase {
         XCTAssertEqual(applied, preset)
         assertSlots(eq, match: preset)
         for i in preset.count..<eq.bands.count {
-            XCTAssertTrue(eq.bands[i].bypass, "slot \(i) should be bypassed")
+            XCTAssertTrue(AudioEngine.slotParameter(eq, kAUNBandEQParam_BypassBand, slot: i) == 1, "slot \(i) should be bypassed")
         }
     }
 
@@ -101,7 +102,7 @@ final class CorrectionLayerTests: XCTestCase {
         XCTAssertEqual(after, composed)
         assertSlots(eq, match: composed)
         for i in composed.count..<eq.bands.count {
-            XCTAssertTrue(eq.bands[i].bypass)
+            XCTAssertTrue(AudioEngine.slotParameter(eq, kAUNBandEQParam_BypassBand, slot: i) == 1)
         }
 
         // And turning it back off restores the preset alone, bypassing the freed slots.
@@ -109,7 +110,7 @@ final class CorrectionLayerTests: XCTestCase {
         XCTAssertEqual(restored, preset)
         assertSlots(eq, match: preset)
         for i in preset.count..<eq.bands.count {
-            XCTAssertTrue(eq.bands[i].bypass)
+            XCTAssertTrue(AudioEngine.slotParameter(eq, kAUNBandEQParam_BypassBand, slot: i) == 1)
         }
     }
 
@@ -119,7 +120,7 @@ final class CorrectionLayerTests: XCTestCase {
         var muted = preset
         muted[0].muted = true
         AudioEngine.configureNativeSlots(eq, bands: muted, previous: before)
-        XCTAssertEqual(eq.bands[0].gain, 0)
+        XCTAssertEqual(AudioEngine.slotParameter(eq, kAUNBandEQParam_Gain, slot: 0), 0)
     }
 
     /// AUNBandEQ drops bandwidth writes while a slot is a shelf, so a Shelf → Bell change
@@ -151,17 +152,19 @@ final class CorrectionLayerTests: XCTestCase {
     /// ones it ignores (bandwidth on shelves and low/high-pass, gain on pass and notch).
     private func assertSlots(_ eq: AVAudioUnitEQ, match bands: [EQBand],
                              file: StaticString = #filePath, line: UInt = #line) {
+        func read(_ base: AudioUnitParameterID, _ i: Int) -> Float { AudioEngine.slotParameter(eq, base, slot: i) }
         for (i, band) in bands.enumerated() {
-            let slot = eq.bands[i]
-            XCTAssertFalse(slot.bypass, "slot \(i) bypassed", file: file, line: line)
-            XCTAssertEqual(slot.filterType, band.filterType.avType, "slot \(i) type", file: file, line: line)
-            XCTAssertEqual(slot.frequency, band.frequency, accuracy: 0.01, "slot \(i) frequency", file: file, line: line)
+            XCTAssertEqual(read(kAUNBandEQParam_BypassBand, i), 0, "slot \(i) bypassed", file: file, line: line)
+            XCTAssertEqual(read(kAUNBandEQParam_FilterType, i), Float(band.filterType.avType.rawValue),
+                           "slot \(i) type", file: file, line: line)
+            XCTAssertEqual(read(kAUNBandEQParam_Frequency, i), band.frequency, accuracy: 0.01,
+                           "slot \(i) frequency", file: file, line: line)
             if band.filterType.usesGain {
-                XCTAssertEqual(slot.gain, AudioEngine.effectiveGain(band), accuracy: 0.01,
+                XCTAssertEqual(read(kAUNBandEQParam_Gain, i), AudioEngine.effectiveGain(band), accuracy: 0.01,
                                "slot \(i) gain", file: file, line: line)
             }
             if [.parametric, .bandPass, .notch].contains(band.filterType) {
-                XCTAssertEqual(slot.bandwidth, band.bandwidth, accuracy: 0.01,
+                XCTAssertEqual(read(kAUNBandEQParam_Bandwidth, i), band.bandwidth, accuracy: 0.01,
                                "slot \(i) bandwidth", file: file, line: line)
             }
         }

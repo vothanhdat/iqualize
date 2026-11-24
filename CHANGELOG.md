@@ -7,6 +7,9 @@ All notable changes to iQualize will be documented in this file.
 ### Added
 - Rename presets from the EQ window: Rename… in the preset sidebar's right-click menu and in the Save button's menu. Built-in presets can be renamed too, and Reset to Original restores their name. Renaming the preset you're editing doesn't save or discard your unsaved changes, and a name another preset already uses is refused.
 
+### Fixed
+- On macOS 26, the equalizer could keep an old value when a band's settings changed back and forth, for example a Bell's gain after switching from a low-pass, or a band's frequency after Room Correction was turned off. Bands are now written directly to the audio unit, so every change takes effect.
+
 ## [0.63.0] - 2026-11-24
 
 ### Added
